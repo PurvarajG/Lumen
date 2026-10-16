@@ -1,0 +1,12 @@
+[package]
+name = "lumen-media"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+libc = "0.2"
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

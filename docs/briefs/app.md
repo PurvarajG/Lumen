@@ -39,6 +39,7 @@ Load still images off-thread with image decode limits and a file-size cap (64MiB
 ## User operations and reliability
 
 - Atomic save/load uses lumen-core; extensions `.lumen.json` / JSON. Keep last chosen path, make Save As available, and mark dirty on all project edits. Timers/stage runtime changes alone do not dirty project.
+- Keep audience/stage updates running while file pickers are open: use asynchronous rfd dialogs with polling/completion messages or a supported nonblocking equivalent, rather than blocking the root update loop in pick_file/save_file. Capture the project snapshot/path for asynchronous saves so later edits are not silently marked saved.
 - Before New/Open/closing root with dirty edits, show Save / Discard / Cancel. Cancelled Save As or failed save must keep the original project and pending operation blocked. Use ViewportCommand::CancelClose for root while modal active. Do not discard without the user's local UI choice. New starts a fresh empty or original demo project with a clearly reset selection and output.
 - Add bounded undo/redo for project edits if possible. If not delivered, explicitly record it instead of exposing dead controls.
 - Text import from user file: use document_from_text, name from stem, add document and playlist item, select first slide. Limit imports to 4MiB. Clipboard paste is optional; no network calls.
