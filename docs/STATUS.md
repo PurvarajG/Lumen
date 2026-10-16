@@ -18,6 +18,7 @@ Formatting, all 44 workspace tests, Clippy with warnings denied and native build
 ## Research
 
 REA 6.5.0 and upstream source are local. Ghidra 12.1.4/OpenJDK21 doctor passed; focused native analysis completed. Reference app: ProPresenter 21.4 build352583705 at /Applications/ProPresenter.app, read-only except original test documents created through its UI. Static/native/UI findings and original Unicode fixtures are documented under research. Raw artifacts stay ignored in .local/research.
+- Anirdesh.com structural research completed (R2 brief): mapped URL templates, hierarchy, DOM selectors, dual-language extraction, and slide units across all 16 scripture sections in docs/research/anirdesh-structure.md. Documented Nginx User-Agent filtering behavior and exact unit counts. Sample HTML files preserved in .local/research/anirdesh/ (untracked).
 
 ## Remaining
 
