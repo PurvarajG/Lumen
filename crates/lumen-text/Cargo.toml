@@ -1,0 +1,13 @@
+[package]
+name = "lumen-text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cosmic-text = "0.19"
+lumen-core = { path = "../lumen-core" }
+thiserror.workspace = true
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
