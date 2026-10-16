@@ -59,6 +59,7 @@ pub struct LumenApp {
     pub error: String,
     pub status: String,
     pub media: MediaState,
+    pub(super) deck: crate::deck::DeckController,
     pub show_audience: bool,
     pub show_stage: bool,
     pub fullscreen_audience: bool,
@@ -127,6 +128,7 @@ impl LumenApp {
         if let Err(error) = crate::macos_quit::install(cc.egui_ctx.clone()) {
             panic!("Lumen could not install its native unsaved-quit guard: {error}");
         }
+        crate::pdf::install(&cc.egui_ctx);
         let selected_doc = project
             .documents
             .first()
@@ -161,6 +163,7 @@ impl LumenApp {
             error: String::new(),
             status: "Ready".into(),
             media,
+            deck: crate::deck::DeckController::new(),
             show_audience: smoke,
             show_stage: smoke,
             fullscreen_audience: settings.audience_fullscreen,
@@ -337,7 +340,7 @@ impl LumenApp {
                 self.media.stop();
                 self.media.load_image(path)
             }
-            Some(background @ Background::Solid(_)) => {
+            Some(background @ (Background::Solid(_) | Background::Pdf { .. })) => {
                 self.media.stop();
                 self.media.remember_background(background);
             }
@@ -908,6 +911,17 @@ impl eframe::App for LumenApp {
             self.transition = None;
         }
         self.media.poll(ctx);
+        self.sync_deck();
+        while let Some(result) = self.deck.poll() {
+            if let Err(error) = result {
+                self.runtime.output.deck = None;
+                self.deck.reconcile(None);
+                self.error = error;
+            }
+        }
+        if let Some(error) = ctx.data_mut(|d| d.remove_temp::<String>(egui::Id::new("pdf-error"))) {
+            self.error = format!("PDF error: {error}");
+        }
         let now = Instant::now();
         self.runtime
             .tick(&self.project, now.saturating_duration_since(self.last_tick));
@@ -1054,6 +1068,7 @@ impl eframe::App for LumenApp {
                 std::time::Duration::from_secs(30).saturating_sub(self.last_autosave.elapsed()),
             );
         }
+        self.sync_deck();
         self.sync_audio_clear();
         self.sync_media();
         self.queue_object_images();
@@ -1070,6 +1085,7 @@ impl eframe::App for LumenApp {
             .values()
             .any(|timer| timer.running)
             || self.media.player.as_ref().is_some_and(|p| !p.is_finished())
+            || self.runtime.output.deck.is_some()
             || self.media.pending
             || self.transition.is_some()
             || self.show_stage
@@ -1082,6 +1098,7 @@ impl eframe::App for LumenApp {
     fn on_exit(&mut self) {
         self.remove_clean_recovery();
         self.audio.stop();
+        self.deck.reconcile(None);
         self.media.shutdown();
     }
 }
@@ -1327,7 +1344,7 @@ impl LumenApp {
             }
         }
         let data = self.published.clone();
-        if self.show_audience {
+        if self.show_audience && self.runtime.output.deck.is_none() {
             let viewport_id = ViewportId::from_hash_of("audience");
             ctx.request_repaint_of(viewport_id);
             let close_cb = self.audience_close_requested.clone();
@@ -1414,6 +1431,22 @@ impl LumenApp {
                         }
                         if state.stage.current {
                             ui.colored_label(crate::style::LIVE, "Current");
+                            if state.output.live.as_ref().is_some_and(|l| {
+                                matches!(l.slide.background, Background::Pdf { .. })
+                            }) {
+                                let width = ui.available_width();
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(width, width * 9.0 / 16.0),
+                                    egui::Sense::hover(),
+                                );
+                                crate::render::paint_preview(
+                                    ui,
+                                    rect,
+                                    state.output.live.as_ref(),
+                                    None,
+                                    &state.images,
+                                );
+                            }
                             crate::render::stage_text(
                                 ui,
                                 state
@@ -1602,7 +1635,19 @@ impl LumenApp {
         use chrono::Timelike;
         chrono::Local::now().num_seconds_from_midnight()
     }
+    fn sync_deck(&mut self) {
+        self.deck.reconcile(self.runtime.output.deck.clone());
+    }
     fn after_trigger(&mut self, previous: OutputState, previous_media: Option<TextureHandle>) {
+        if self.runtime.output.live.as_ref().is_some_and(|l| {
+            l.slide
+                .actions
+                .iter()
+                .any(|a| matches!(a, lumen_core::CueAction::PlayDeck { .. }))
+        }) {
+            self.deck.reconcile(None);
+        }
+        self.sync_deck();
         if let Some(live) = &self.runtime.output.live {
             let kind = live.slide.transition.clone();
             self.transition = if transition_millis(&kind) == 0 {
@@ -1621,6 +1666,10 @@ impl LumenApp {
         }
     }
     pub(super) fn navigate(&mut self, forward: bool) {
+        if self.runtime.output.deck.is_some() {
+            self.deck.navigate(forward);
+            return;
+        }
         let previous = self.runtime.output.clone();
         let media = self.media.image_texture.clone();
         let result = if forward {
@@ -1641,6 +1690,7 @@ impl LumenApp {
         if let Err(e) = self.runtime.apply_actions(&self.project, actions) {
             self.error = e.to_string();
         }
+        self.sync_deck();
         self.sync_audio_clear();
         self.sync_media();
     }
@@ -1648,6 +1698,7 @@ impl LumenApp {
         if let Err(e) = self.runtime.run_macro(&self.project, id) {
             self.error = e.to_string();
         }
+        self.sync_deck();
         self.sync_audio_clear();
         self.sync_media();
     }
@@ -1673,7 +1724,7 @@ impl LumenApp {
     pub(super) fn thumbnail(&mut self, background: &Background) -> Option<TextureHandle> {
         let path = match background {
             Background::Image { path } | Background::Video { path, .. } => path,
-            Background::Solid(_) => return None,
+            Background::Solid(_) | Background::Pdf { .. } => return None,
         };
         self.thumbnails.request(path);
         self.thumbnails.texture(path).cloned()

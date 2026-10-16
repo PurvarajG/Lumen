@@ -30,5 +30,5 @@ uuid.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 wgpu = { version = "=27.0.1", default-features = false, features = ["metal"] }
 objc2 = "=0.5.3"
-objc2-app-kit = { version = "=0.2.2", features = ["NSApplication", "NSResponder"] }
-objc2-foundation = { version = "=0.2.2", features = ["NSThread"] }
+objc2-app-kit = { version = "=0.2.2", features = ["NSApplication", "NSResponder", "NSWorkspace", "NSRunningApplication"] }
+objc2-foundation = { version = "=0.2.2", features = ["NSThread", "NSString", "NSURL"] }

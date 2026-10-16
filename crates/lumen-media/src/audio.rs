@@ -210,6 +210,55 @@ impl Drop for AudioPlayer {
 }
 
 #[cfg(test)]
+mod ogg_decode_tests {
+    use super::*;
+    use std::process::Command;
+
+    #[test]
+    fn decodes_generated_ogg_vorbis_when_ffmpeg_encoder_is_available() {
+        let Ok(output) = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=44100",
+                "-t",
+                "1",
+                "-c:a",
+                "vorbis",
+                "-strict",
+                "-2",
+            ])
+            .arg("-f")
+            .arg("ogg")
+            .arg("pipe:1")
+            .output()
+        else {
+            eprintln!("SKIP: ffmpeg unavailable; cannot generate OGG fixture");
+            return;
+        };
+        if !output.status.success() {
+            eprintln!(
+                "SKIP: ffmpeg has no Vorbis encoder: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let decoder = Decoder::try_from(BufReader::new(std::io::Cursor::new(output.stdout)))
+            .expect("generated OGG/Vorbis should decode");
+        let samples = decoder.count();
+        assert!(
+            samples > 40_000,
+            "expected about one second of audio, got {samples} samples"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::{

@@ -150,6 +150,7 @@ struct CacheKey {
     size: u64,
     max_w: u32,
     max_h: u32,
+    pdf_page: Option<u32>,
 }
 
 struct Entry {
@@ -198,6 +199,7 @@ impl ThumbnailCache {
             size: metadata.len(),
             max_w,
             max_h,
+            pdf_page: None,
         };
         if let Some(index) = self.entries.iter().position(|entry| entry.key == key) {
             let entry = self.entries.remove(index).unwrap();
@@ -206,6 +208,49 @@ impl ThumbnailCache {
             return Ok(frame);
         }
         let frame = Arc::new(thumbnail(&canonical, max_w, max_h)?);
+        if self.capacity > 0 {
+            self.entries.push_front(Entry {
+                key,
+                frame: Arc::clone(&frame),
+            });
+            self.entries.truncate(self.capacity);
+        }
+        Ok(frame)
+    }
+
+    /// Loads and caches a rendered PDF page, keyed by canonical path, mtime, file size, page, and bounds.
+    pub fn get_or_load_pdf(
+        &mut self,
+        path: &Path,
+        page: u32,
+        max_w: u32,
+        max_h: u32,
+    ) -> Result<Arc<Frame>, MediaError> {
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| MediaError::InvalidPath(format!("{}: {e}", path.display())))?;
+        let metadata = std::fs::metadata(&canonical)?;
+        if !metadata.is_file() {
+            return Err(MediaError::InvalidPath(format!(
+                "{} is not a regular file",
+                path.display()
+            )));
+        }
+        let key = CacheKey {
+            path: canonical.clone(),
+            modified: metadata.modified().ok(),
+            size: metadata.len(),
+            max_w,
+            max_h,
+            pdf_page: Some(page),
+        };
+        if let Some(index) = self.entries.iter().position(|entry| entry.key == key) {
+            let entry = self.entries.remove(index).unwrap();
+            let frame = Arc::clone(&entry.frame);
+            self.entries.push_front(entry);
+            return Ok(frame);
+        }
+        let frame = Arc::new(crate::render_pdf_page(&canonical, page, max_w, max_h)?);
         if self.capacity > 0 {
             self.entries.push_front(Entry {
                 key,
@@ -333,5 +378,51 @@ mod tests {
         assert!(!std::sync::Arc::ptr_eq(&a, &c));
         assert_eq!(a.rgba, c.rgba);
         drop(dir);
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod pdf_cache_tests {
+    use super::*;
+    use std::{sync::Arc, time::Duration};
+
+    #[test]
+    fn pdf_cache_keys_page_dimensions_and_file_modification() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache-fixture.pdf");
+        let original = crate::pdf::test_two_page_pdf();
+        std::fs::write(&path, &original).unwrap();
+        let mut cache = ThumbnailCache::default();
+
+        let first = cache.get_or_load_pdf(&path, 1, 80, 80).unwrap();
+        let hit = cache.get_or_load_pdf(&path, 1, 80, 80).unwrap();
+        assert!(
+            Arc::ptr_eq(&first, &hit),
+            "identical PDF request should hit cache"
+        );
+        let other_page = cache.get_or_load_pdf(&path, 2, 80, 80).unwrap();
+        assert!(
+            !Arc::ptr_eq(&first, &other_page),
+            "page number is part of the key"
+        );
+        let other_size = cache.get_or_load_pdf(&path, 1, 64, 64).unwrap();
+        assert!(
+            !Arc::ptr_eq(&first, &other_size),
+            "dimensions are part of the key"
+        );
+
+        std::thread::sleep(Duration::from_millis(1_100));
+        let mut changed = original;
+        let location = changed
+            .windows(8)
+            .position(|bytes| bytes == b"1 0 0 rg")
+            .unwrap();
+        changed[location..location + 8].copy_from_slice(b"0 1 0 rg");
+        std::fs::write(&path, changed).unwrap();
+        let changed_frame = cache.get_or_load_pdf(&path, 1, 80, 80).unwrap();
+        assert!(
+            !Arc::ptr_eq(&first, &changed_frame),
+            "modified file should invalidate cache"
+        );
     }
 }

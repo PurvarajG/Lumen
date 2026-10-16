@@ -18,6 +18,8 @@ rodio = {
         "symphonia-flac",
         "symphonia-isomp4",
         "symphonia-aac",
+        "symphonia-ogg",
+        "symphonia-vorbis",
     ],
 }
 

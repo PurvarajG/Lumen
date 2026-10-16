@@ -1,6 +1,7 @@
 mod app;
 mod audio;
 mod books;
+mod deck;
 mod displays;
 mod file;
 mod inspector;
@@ -8,6 +9,7 @@ mod inspector;
 mod macos_quit;
 mod media;
 mod panels;
+mod pdf;
 mod quit;
 mod recovery;
 mod remote;

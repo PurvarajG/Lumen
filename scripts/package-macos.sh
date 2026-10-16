@@ -72,6 +72,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSAppleEventsUsageDescription</key><string>Lumen controls PowerPoint or Keynote slideshows when you play a deck.</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict>
 </plist>
