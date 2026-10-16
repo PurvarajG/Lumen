@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use crate::{Document, Slide};
+use crate::{Document, Slide, markup::escape_markup};
 
 pub fn document_from_text(name: &str, text: &str, theme_id: Uuid) -> Document {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
@@ -25,7 +25,12 @@ pub fn document_from_text(name: &str, text: &str, theme_id: Uuid) -> Document {
         .map(|(index, lines)| {
             let mut slide = Slide::new(theme_id);
             slide.label = format!("Slide {}", index + 1);
-            slide.text = lines.join("\n");
+            // Escape imported text so literal *, _, [ survive markup parsing
+            slide.text = lines
+                .iter()
+                .map(|line| escape_markup(line))
+                .collect::<Vec<_>>()
+                .join("\n");
             slide
         })
         .collect();

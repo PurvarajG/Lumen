@@ -1,9 +1,16 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{CoreError, CueAction, Project, Slide, Theme, model::validate_actions};
+use crate::{
+    CoreError, CueAction, Project, Slide, Theme, TimerDef, TimerKind, model::validate_actions,
+};
+
+// ---------------------------------------------------------------------------
+// LiveSlide
+// ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct LiveSlide {
@@ -13,87 +20,177 @@ pub struct LiveSlide {
     pub theme: Theme,
 }
 
+// ---------------------------------------------------------------------------
+// OutputState
+// ---------------------------------------------------------------------------
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct OutputState {
     pub live: Option<LiveSlide>,
     pub blackout: bool,
     pub clear_text: bool,
     pub stage_message: String,
+    #[serde(default)]
+    pub props: Vec<Uuid>,
+    #[serde(default)]
+    pub message: Option<Uuid>,
+    #[serde(default)]
+    pub stop_audio_serial: u64,
 }
 
+// ---------------------------------------------------------------------------
+// TimerState (runtime state per TimerDef)
+// ---------------------------------------------------------------------------
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Timer {
-    pub id: Uuid,
-    pub name: String,
-    pub duration_secs: f64,
-    pub remaining_secs: f64,
+pub struct TimerState {
     pub running: bool,
+    pub value_secs: f64,
 }
 
-impl Timer {
-    pub fn new(name: impl Into<String>, duration_secs: f64) -> Self {
-        let duration_secs = if duration_secs.is_finite() && duration_secs >= 0.0 {
-            duration_secs
-        } else {
-            0.0
-        };
-        Self {
-            id: Uuid::new_v4(),
-            name: name.into(),
-            duration_secs,
-            remaining_secs: duration_secs,
-            running: false,
-        }
-    }
-    pub fn start(&mut self) {
-        if self.remaining_secs > 0.0 {
-            self.running = true;
-        }
-    }
-    pub fn pause(&mut self) {
-        self.running = false;
-    }
-    pub fn reset(&mut self) {
-        self.remaining_secs = self.duration_secs;
-        self.running = false;
-    }
-    pub fn tick(&mut self, elapsed: Duration) {
-        if self.running {
-            self.remaining_secs = (self.remaining_secs - elapsed.as_secs_f64()).max(0.0);
-            if self.remaining_secs == 0.0 {
-                self.running = false;
-            }
-        }
-    }
-    pub fn display(&self) -> String {
-        let seconds = self.remaining_secs.max(0.0).ceil().min(u64::MAX as f64) as u64;
-        let hours = seconds / 3600;
-        let minutes = (seconds % 3600) / 60;
-        let seconds = seconds % 60;
-        if hours > 0 {
-            format!("{hours:02}:{minutes:02}:{seconds:02}")
-        } else {
-            format!("{minutes:02}:{seconds:02}")
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Runtime {
-    pub output: OutputState,
-    pub timers: Vec<Timer>,
-}
-
-impl Default for Runtime {
+impl Default for TimerState {
     fn default() -> Self {
         Self {
-            output: OutputState::default(),
-            timers: vec![Timer::new("Countdown", 300.0)],
+            running: false,
+            value_secs: 0.0,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Runtime
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Runtime {
+    pub output: OutputState,
+    pub timer_states: HashMap<Uuid, TimerState>,
 }
 
 impl Runtime {
+    /// Synchronize timer runtime states with project timer definitions.
+    /// Adds state for new defs (with initial values), drops removed ones.
+    pub fn sync_timers(&mut self, project: &Project) {
+        // Remove states for timers that no longer exist in the project
+        let timer_ids: std::collections::HashSet<Uuid> =
+            project.timers.iter().map(|t| t.id).collect();
+        self.timer_states.retain(|id, _| timer_ids.contains(id));
+
+        // Add states for new timers
+        for def in &project.timers {
+            self.timer_states.entry(def.id).or_insert_with(|| {
+                let value = match &def.kind {
+                    TimerKind::Countdown { duration_secs } => *duration_secs,
+                    TimerKind::CountdownTo { .. } => 0.0, // derived from wall clock
+                    TimerKind::Elapsed => 0.0,
+                };
+                TimerState {
+                    running: false,
+                    value_secs: value,
+                }
+            });
+        }
+    }
+
+    /// Advance running timers by `elapsed`.
+    pub fn tick(&mut self, project: &Project, elapsed: Duration) {
+        self.sync_timers(project);
+        let dt = elapsed.as_secs_f64();
+        for def in &project.timers {
+            if let Some(state) = self.timer_states.get_mut(&def.id) {
+                if !state.running {
+                    continue;
+                }
+                match &def.kind {
+                    TimerKind::Countdown { .. } => {
+                        state.value_secs -= dt;
+                        if state.value_secs <= 0.0 && !def.allow_overrun {
+                            state.value_secs = 0.0;
+                            state.running = false;
+                        }
+                    }
+                    TimerKind::CountdownTo { .. } => {
+                        // CountdownTo is derived from wall clock, not tick
+                        // value_secs is updated by timer_display, tick is a no-op
+                    }
+                    TimerKind::Elapsed => {
+                        state.value_secs += dt;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Display a timer as `MM:SS` or `HH:MM:SS`, prefixed `-` when overrun.
+    pub fn timer_display(&self, def: &TimerDef, now_secs_of_day: u32) -> String {
+        match &def.kind {
+            TimerKind::Countdown { .. } => {
+                let value = self
+                    .timer_states
+                    .get(&def.id)
+                    .map(|s| s.value_secs)
+                    .unwrap_or(0.0);
+                format_timer_value(value)
+            }
+            TimerKind::CountdownTo {
+                hour,
+                minute,
+                second,
+            } => {
+                let target = *hour as i64 * 3600 + *minute as i64 * 60 + *second as i64;
+                let now = now_secs_of_day as i64;
+                let mut remaining = target - now;
+                if remaining < 0 {
+                    if def.allow_overrun {
+                        // negative (overrun)
+                    } else {
+                        remaining = 0;
+                    }
+                }
+                format_timer_value(remaining as f64)
+            }
+            TimerKind::Elapsed => {
+                let value = self
+                    .timer_states
+                    .get(&def.id)
+                    .map(|s| s.value_secs)
+                    .unwrap_or(0.0);
+                format_timer_value(value)
+            }
+        }
+    }
+
+    /// Render a message template, replacing `{timer:<uuid>}` tokens with display values.
+    pub fn render_message(
+        &self,
+        project: &Project,
+        id: Uuid,
+        now_secs_of_day: u32,
+    ) -> Option<String> {
+        let msg = project.message(id)?;
+        let mut result = String::with_capacity(msg.text.len());
+        let mut rest = msg.text.as_str();
+
+        // Replace {timer:<uuid>} tokens; unknown or malformed tokens stay literal.
+        while let Some(start) = rest.find("{timer:") {
+            result.push_str(&rest[..start]);
+            let token = &rest[start..];
+            let Some(end) = token.find('}') else {
+                rest = token;
+                break;
+            };
+            let display = Uuid::parse_str(&token[7..end])
+                .ok()
+                .and_then(|id| project.timer_def(id))
+                .map(|def| self.timer_display(def, now_secs_of_day));
+            result.push_str(display.as_deref().unwrap_or(&token[..=end]));
+            rest = &token[end + 1..];
+        }
+        result.push_str(rest);
+
+        Some(result)
+    }
+
     pub fn trigger(
         &mut self,
         project: &Project,
@@ -118,9 +215,10 @@ impl Runtime {
                 theme_id: slide.theme_id,
             })?;
         validate_actions(&slide.actions, format!("slide {}", slide.id))?;
-        self.validate_action_references(&slide.actions)?;
+        self.validate_action_references(project, &slide.actions)?;
 
         let mut candidate = self.clone();
+        candidate.sync_timers(project);
         candidate.output.live = Some(LiveSlide {
             document_id,
             document_name: document.name.clone(),
@@ -128,7 +226,7 @@ impl Runtime {
             theme: theme.clone(),
         });
         candidate.output.clear_text = false;
-        candidate.apply_actions_unchecked(&slide.actions);
+        candidate.apply_actions_unchecked(project, &slide.actions);
         *self = candidate;
         Ok(())
     }
@@ -196,11 +294,16 @@ impl Runtime {
         })
     }
 
-    pub fn apply_actions(&mut self, actions: &[CueAction]) -> Result<(), CoreError> {
+    pub fn apply_actions(
+        &mut self,
+        project: &Project,
+        actions: &[CueAction],
+    ) -> Result<(), CoreError> {
         validate_actions(actions, "action batch".into())?;
-        self.validate_action_references(actions)?;
+        self.validate_action_references(project, actions)?;
         let mut candidate = self.clone();
-        candidate.apply_actions_unchecked(actions);
+        candidate.sync_timers(project);
+        candidate.apply_actions_unchecked(project, actions);
         *self = candidate;
         Ok(())
     }
@@ -211,33 +314,40 @@ impl Runtime {
             .iter()
             .find(|mac| mac.id == id)
             .ok_or(CoreError::MissingMacro(id))?;
-        self.apply_actions(&mac.actions)
+        let actions = mac.actions.clone();
+        self.apply_actions(project, &actions)
     }
 
-    pub fn tick(&mut self, elapsed: Duration) {
-        for timer in &mut self.timers {
-            timer.tick(elapsed);
-        }
-    }
-
-    fn validate_action_references(&self, actions: &[CueAction]) -> Result<(), CoreError> {
+    fn validate_action_references(
+        &self,
+        project: &Project,
+        actions: &[CueAction],
+    ) -> Result<(), CoreError> {
         for action in actions {
-            let id = match action {
+            match action {
                 CueAction::StartTimer { id }
                 | CueAction::PauseTimer { id }
-                | CueAction::ResetTimer { id } => Some(*id),
-                _ => None,
-            };
-            if let Some(id) = id
-                && !self.timers.iter().any(|timer| timer.id == id)
-            {
-                return Err(CoreError::MissingTimer(id));
+                | CueAction::ResetTimer { id } => {
+                    if project.timer_def(*id).is_none() {
+                        return Err(CoreError::MissingTimer(*id));
+                    }
+                }
+                CueAction::TriggerProp { id } => {
+                    if project.prop(*id).is_none() {
+                        return Err(CoreError::MissingProp(*id));
+                    }
+                }
+                CueAction::ShowMessage { id } if project.message(*id).is_none() => {
+                    return Err(CoreError::MissingMessage(*id));
+                }
+                CueAction::ShowMessage { .. } => {}
+                _ => {}
             }
         }
         Ok(())
     }
 
-    fn apply_actions_unchecked(&mut self, actions: &[CueAction]) {
+    fn apply_actions_unchecked(&mut self, project: &Project, actions: &[CueAction]) {
         for action in actions {
             match action {
                 CueAction::Blackout(value) => self.output.blackout = *value,
@@ -245,27 +355,96 @@ impl Runtime {
                 CueAction::ClearAll => {
                     self.output.live = None;
                     self.output.clear_text = false;
+                    self.output.props.clear();
+                    self.output.message = None;
                 }
                 CueAction::StageMessage(message) => self.output.stage_message = message.clone(),
                 CueAction::StartTimer { id } => {
-                    if let Some(timer) = self.timers.iter_mut().find(|timer| timer.id == *id) {
-                        timer.start()
+                    self.sync_timers(project);
+                    if let Some(state) = self.timer_states.get_mut(id) {
+                        // For Countdown: only start if value > 0
+                        if let Some(def) = project.timer_def(*id) {
+                            match &def.kind {
+                                TimerKind::Countdown { .. } => {
+                                    if state.value_secs > 0.0 || def.allow_overrun {
+                                        state.running = true;
+                                    }
+                                }
+                                _ => {
+                                    state.running = true;
+                                }
+                            }
+                        }
                     }
                 }
                 CueAction::PauseTimer { id } => {
-                    if let Some(timer) = self.timers.iter_mut().find(|timer| timer.id == *id) {
-                        timer.pause()
+                    if let Some(state) = self.timer_states.get_mut(id) {
+                        state.running = false;
                     }
                 }
                 CueAction::ResetTimer { id } => {
-                    if let Some(timer) = self.timers.iter_mut().find(|timer| timer.id == *id) {
-                        timer.reset()
+                    if let Some(def) = project.timer_def(*id)
+                        && let Some(state) = self.timer_states.get_mut(id)
+                    {
+                        state.running = false;
+                        match &def.kind {
+                            TimerKind::Countdown { duration_secs } => {
+                                state.value_secs = *duration_secs;
+                            }
+                            TimerKind::Elapsed => {
+                                state.value_secs = 0.0;
+                            }
+                            TimerKind::CountdownTo { .. } => {
+                                // CountdownTo resets to wall-clock derived
+                                state.value_secs = 0.0;
+                            }
+                        }
                     }
+                }
+                CueAction::TriggerProp { id } => {
+                    if !self.output.props.contains(id) {
+                        self.output.props.push(*id);
+                    }
+                }
+                CueAction::ClearProps => {
+                    self.output.props.clear();
+                }
+                CueAction::ShowMessage { id } => {
+                    self.output.message = Some(*id);
+                }
+                CueAction::ClearMessage => {
+                    self.output.message = None;
+                }
+                CueAction::StopAudio => {
+                    self.output.stop_audio_serial += 1;
                 }
             }
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Timer display helper
+// ---------------------------------------------------------------------------
+
+fn format_timer_value(value: f64) -> String {
+    let negative = value < 0.0;
+    let abs = value.abs();
+    let total_secs = abs.ceil().min(u64::MAX as f64) as u64;
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let seconds = total_secs % 60;
+    let prefix = if negative { "-" } else { "" };
+    if hours > 0 {
+        format!("{prefix}{hours:02}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{prefix}{minutes:02}:{seconds:02}")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Playlist helpers
+// ---------------------------------------------------------------------------
 
 // Playlist entries intentionally expand in order, including repeated documents.
 // If live is repeated, navigation anchors to its first matching occurrence.

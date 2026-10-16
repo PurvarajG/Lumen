@@ -265,10 +265,21 @@ impl LumenApp {
             output: self.runtime.output.clone(),
             runtime: RuntimeView {
                 timers: self
-                    .runtime
+                    .project
                     .timers
                     .iter()
-                    .map(|t| (t.name.clone(), t.display(), t.running))
+                    .map(|timer| {
+                        let running = self
+                            .runtime
+                            .timer_states
+                            .get(&timer.id)
+                            .is_some_and(|state| state.running);
+                        (
+                            timer.name.clone(),
+                            self.runtime.timer_display(timer, 0),
+                            running,
+                        )
+                    })
                     .collect(),
                 message: self.runtime.output.stage_message.clone(),
             },
@@ -370,7 +381,7 @@ impl LumenApp {
             self.path.clone()
         } {
             file::launch(
-                FileAction::Save(save_id, path, self.project.clone()),
+                FileAction::Save(save_id, path, Box::new(self.project.clone())),
                 self.tx.clone(),
                 self.repaint_ctx.clone(),
             );
@@ -676,7 +687,7 @@ impl eframe::App for LumenApp {
         self.media.poll(ctx);
         let now = Instant::now();
         self.runtime
-            .tick(now.saturating_duration_since(self.last_tick));
+            .tick(&self.project, now.saturating_duration_since(self.last_tick));
         self.last_tick = now;
         self.fullscreen_audience = self.audience_fullscreen_state.load(Ordering::Relaxed);
         self.fullscreen_stage = self.stage_fullscreen_state.load(Ordering::Relaxed);
@@ -754,7 +765,11 @@ impl eframe::App for LumenApp {
             self.allow_close = true;
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
-        if self.runtime.timers.iter().any(|t| t.running)
+        if self
+            .runtime
+            .timer_states
+            .values()
+            .any(|timer| timer.running)
             || self.media.player.as_ref().is_some_and(|p| !p.is_finished())
             || self.media.pending
         {

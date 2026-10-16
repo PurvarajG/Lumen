@@ -14,7 +14,7 @@ pub enum FileResult {
 }
 pub enum FileAction {
     Open(u64),
-    Save(u64, PathBuf, Project),
+    Save(u64, PathBuf, Box<Project>),
     Import,
     PickMedia(bool),
 }
@@ -35,7 +35,7 @@ pub fn launch(action: FileAction, tx: Sender<FileResult>, repaint_ctx: Context) 
             }
             FileAction::Save(id, path, project) => {
                 let result = save_project(&path, &project)
-                    .map(|_| (path, project))
+                    .map(|_| (path, *project))
                     .map_err(|e| e.to_string());
                 let _ = tx.send(FileResult::Save(id, result));
             }
