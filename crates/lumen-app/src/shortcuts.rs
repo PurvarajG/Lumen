@@ -12,6 +12,8 @@ pub enum Shortcut {
     Save(bool),
     Open,
     New,
+    MoveItem(isize),
+    RemoveItem,
 }
 
 pub fn map(key: Key, command: bool, shift: bool, typing: bool) -> Option<Shortcut> {
@@ -29,6 +31,8 @@ pub fn map(key: Key, command: bool, shift: bool, typing: bool) -> Option<Shortcu
             Key::S => Some(Shortcut::Save(shift)),
             Key::O => Some(Shortcut::Open),
             Key::N => Some(Shortcut::New),
+            Key::ArrowUp => Some(Shortcut::MoveItem(-1)),
+            Key::ArrowDown => Some(Shortcut::MoveItem(1)),
             _ => None,
         };
     }
@@ -43,6 +47,7 @@ pub fn map(key: Key, command: bool, shift: bool, typing: bool) -> Option<Shortcu
         Key::F5 => Some(Shortcut::Clear(5)),
         Key::F6 => Some(Shortcut::Clear(6)),
         Key::B => Some(Shortcut::Blackout),
+        Key::Delete | Key::Backspace => Some(Shortcut::RemoveItem),
         _ => None,
     }
 }
@@ -72,5 +77,18 @@ mod tests {
         assert_eq!(map(Key::Z, true, false, false), Some(Shortcut::Undo));
         assert_eq!(map(Key::F, true, false, false), Some(Shortcut::Search));
         assert_eq!(map(Key::B, true, false, false), None);
+        assert_eq!(
+            map(Key::ArrowUp, true, false, false),
+            Some(Shortcut::MoveItem(-1))
+        );
+        assert_eq!(
+            map(Key::ArrowDown, true, false, false),
+            Some(Shortcut::MoveItem(1))
+        );
+        assert_eq!(
+            map(Key::Delete, false, false, false),
+            Some(Shortcut::RemoveItem)
+        );
+        assert_eq!(map(Key::Backspace, false, false, true), None);
     }
 }

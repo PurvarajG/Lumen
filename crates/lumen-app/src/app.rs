@@ -113,6 +113,9 @@ pub struct LumenApp {
     audio_seen_serial: u64,
     launched: Instant,
     active_import: Option<u64>,
+    adding: Vec<u64>,
+    pub(super) add_progress: Option<(usize, usize)>,
+    pub(super) add_notice: Option<String>,
     active_recovery: u64,
     project_epoch: u64,
     saved_operation: u64,
@@ -217,6 +220,9 @@ impl LumenApp {
             audio_seen_serial: 0,
             launched: Instant::now(),
             active_import: None,
+            adding: Vec::new(),
+            add_progress: None,
+            add_notice: None,
             active_recovery: 0,
             project_epoch: 0,
             saved_operation: 0,
@@ -459,6 +465,7 @@ impl LumenApp {
             Pending::New => {
                 self.media.stop();
                 self.active_import = None;
+                self.reset_adds();
                 self.project_epoch = self.project_epoch.wrapping_add(1);
                 self.active_recovery = u64::MAX;
                 self.recovered = None;
@@ -576,6 +583,7 @@ impl LumenApp {
                     self.edit_focus = None;
                     self.history_applied = true;
                     self.active_import = None;
+                    self.reset_adds();
                     self.project_epoch = self.project_epoch.wrapping_add(1);
                     self.audio.stop();
                     self.transition = None;
@@ -738,6 +746,18 @@ impl LumenApp {
                         Err(e) => self.error = format!("Couldn't save recovery: {e}"),
                     }
                 }
+                FileResult::AddProgress(id, done, total) if self.adding.contains(&id) => {
+                    self.add_progress = Some((done, total));
+                }
+                FileResult::Added(id, batch) if self.adding.contains(&id) => {
+                    self.adding.retain(|a| *a != id);
+                    self.add_progress = None;
+                    match batch {
+                        Some(batch) => self.finish_add(batch),
+                        None => self.status = "Add files cancelled".into(),
+                    }
+                }
+                FileResult::AddProgress(..) | FileResult::Added(..) => {}
                 FileResult::PickMedia(None, _) => {
                     self.media_target = None;
                     self.modal = false;
@@ -808,6 +828,11 @@ impl LumenApp {
                 Shortcut::Save(as_new) => self.save(as_new),
                 Shortcut::Open => self.request(Pending::Open),
                 Shortcut::New => self.request(Pending::New),
+                Shortcut::MoveItem(step) if self.running_order_focused() => {
+                    self.move_selected(step)
+                }
+                Shortcut::RemoveItem if self.running_order_focused() => self.remove_selected(),
+                Shortcut::MoveItem(_) | Shortcut::RemoveItem => {}
             }
         }
     }
@@ -895,6 +920,7 @@ impl eframe::App for LumenApp {
         let before = self.project.clone();
         self.history_applied = false;
         self.poll_files();
+        self.handle_drops(ctx);
         crate::books::poll(self, ctx);
         self.thumbnails.poll(ctx);
         let events = self
@@ -1048,6 +1074,7 @@ impl eframe::App for LumenApp {
         if let Some(id) = self.confirm_delete {
             self.delete_modal(ctx, id)
         }
+        Self::drop_overlay(ctx);
         if self.project != before && !self.history_applied {
             let focus = if ctx.wants_keyboard_input() {
                 ctx.memory(|m| m.focused())
@@ -1103,6 +1130,131 @@ impl eframe::App for LumenApp {
     }
 }
 impl LumenApp {
+    fn reset_adds(&mut self) {
+        self.adding.clear();
+        self.add_progress = None;
+        self.add_notice = None;
+    }
+    /// `None` opens the multi-select picker; otherwise the dropped paths are added.
+    pub(super) fn start_add(&mut self, paths: Option<Vec<PathBuf>>) {
+        let Some(theme) = self.project.themes.first().map(|t| t.id) else {
+            self.error = "Couldn't add files: this show has no theme".into();
+            return;
+        };
+        self.operation_counter = self.operation_counter.wrapping_add(1);
+        self.adding.push(self.operation_counter);
+        file::launch(
+            FileAction::Add(self.operation_counter, paths, theme),
+            self.tx.clone(),
+            self.repaint_ctx.clone(),
+        );
+        self.status = "Adding files…".into();
+    }
+    fn handle_drops(&mut self, ctx: &Context) {
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        if !dropped.is_empty() && !self.modal {
+            self.start_add(Some(dropped));
+        }
+    }
+    fn drop_overlay(ctx: &Context) {
+        if ctx.input(|i| i.raw.hovered_files.is_empty()) {
+            return;
+        }
+        let rect = ctx.content_rect();
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("drop-overlay"),
+        ));
+        painter.rect_filled(rect, 0.0, crate::style::CANVAS.gamma_multiply(0.85));
+        painter.rect_stroke(
+            rect.shrink(6.0),
+            6.0,
+            egui::Stroke::new(3.0_f32, crate::style::SAFFRON),
+            egui::StrokeKind::Inside,
+        );
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "Drop to add to running order",
+            egui::FontId::new(
+                crate::style::TITLE,
+                egui::FontFamily::Name("Poppins SemiBold".into()),
+            ),
+            crate::style::TEXT,
+        );
+    }
+    fn finish_add(&mut self, batch: crate::add::AddBatch) {
+        let notice = crate::add::batch_notice(batch.documents.len(), &batch.skipped);
+        if let Some(warning) = batch.warnings.first() {
+            self.error = warning.clone();
+        }
+        if let Some(first) = batch.documents.first() {
+            let (doc, slide) = (first.id, first.slides.first().map(|s| s.id));
+            crate::add::insert_documents(&mut self.project, self.selected_doc, batch.documents);
+            crate::books::close_preview(self);
+            self.library_tab = 0;
+            self.selected_doc = doc;
+            self.selected_slide = slide;
+            self.edit_focus = None;
+            self.mark();
+        }
+        self.status = notice.clone();
+        self.add_notice = Some(notice);
+    }
+    fn running_order_focused(&self) -> bool {
+        self.library_tab == 0 && !crate::books::has_preview(self)
+    }
+    fn selected_item(&self) -> Option<usize> {
+        self.project
+            .playlist
+            .iter()
+            .position(|p| p.document_id == self.selected_doc)
+    }
+    /// Move a running-order row to final index `to` and keep it selected. One undo step.
+    pub(super) fn move_running_order(&mut self, from: usize, to: usize) {
+        if crate::add::move_item(&mut self.project.playlist, from, to) {
+            let doc = self.project.playlist[to].document_id;
+            self.select_document(doc);
+            self.edit_focus = None;
+            self.mark();
+        }
+    }
+    fn move_selected(&mut self, step: isize) {
+        if let Some(from) = self.selected_item() {
+            let to = from.saturating_add_signed(step);
+            self.move_running_order(from, to);
+        }
+    }
+    pub(super) fn select_document(&mut self, doc: Uuid) {
+        self.selected_doc = doc;
+        self.selected_slide = self
+            .project
+            .document(doc)
+            .and_then(|d| d.slides.first())
+            .map(|s| s.id);
+    }
+    /// Removes from the running order only; the document stays in the library.
+    pub(super) fn remove_item(&mut self, index: usize) {
+        if crate::add::remove_playlist_item(&mut self.project, index) {
+            let next = index.min(self.project.playlist.len().saturating_sub(1));
+            if let Some(item) = self.project.playlist.get(next) {
+                self.select_document(item.document_id);
+            }
+            self.edit_focus = None;
+            self.mark();
+        }
+    }
+    fn remove_selected(&mut self) {
+        if let Some(index) = self.selected_item() {
+            self.remove_item(index);
+        }
+    }
     fn toolbar(&mut self, ctx: &Context) {
         egui::TopBottomPanel::top("toolbar")
             .frame(crate::style::panel_frame())
@@ -1253,6 +1405,7 @@ impl LumenApp {
             ui.label("Space / Right / Page Down: Next. Left / Page Up: Previous. Return: Go live.");
             ui.label("F1 All · F2 Slide · F3 Media · F4 Props · F5 Audio · F6 Messages. B: Blackout.");
             ui.label("Cmd+F Search. Cmd+Z Undo. Cmd+Shift+Z Redo. Shortcuts pause while editing text.");
+            ui.label("Running order: Cmd+Up / Cmd+Down move the selected item. Delete removes it from the order (not the library).");
         });
         }
     }

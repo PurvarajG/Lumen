@@ -22,132 +22,15 @@ pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
     } else {
         app.project.playlist.iter().map(|p| p.document_id).collect()
     };
-    let next = app.runtime.peek_next(&app.project);
-    egui::ScrollArea::vertical()
-        .id_salt("library-list")
-        .max_height((ui.available_height() - 210.0).max(100.0))
-        .show(ui, |ui| {
-            let mut shown = 0;
-            for (index, id) in docs.iter().enumerate() {
-                let Some(doc) = app.project.document(*id).cloned() else {
-                    continue;
-                };
-                shown += 1;
-                ui.push_id(index, |ui| {
-                    let on_deck = next.as_ref().is_some_and(|n| n.document_id == *id);
-                    let live = app
-                        .runtime
-                        .output
-                        .live
-                        .as_ref()
-                        .is_some_and(|n| n.document_id == *id);
-                    let r = ui
-                        .horizontal(|ui| {
-                            let state_width = 52.0;
-                            let width =
-                                (ui.available_width() - state_width - ui.spacing().item_spacing.x)
-                                    .max(40.0);
-                            let row = ui
-                                .allocate_ui_with_layout(
-                                    egui::vec2(width, style::CONTROL),
-                                    egui::Layout::left_to_right(egui::Align::Center),
-                                    |ui| {
-                                        crate::text::gu_selectable(
-                                            ui,
-                                            app.selected_doc == *id
-                                                && !crate::books::has_preview(app),
-                                            crate::books::document_label(&doc.name),
-                                            style::BODY,
-                                        )
-                                    },
-                                )
-                                .inner;
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if live {
-                                        ui.colored_label(style::LIVE, "LIVE");
-                                    } else {
-                                        ui.label(format!("{} cues", doc.slides.len()));
-                                    }
-                                },
-                            );
-                            row
-                        })
-                        .inner;
-                    if on_deck {
-                        ui.painter().rect_stroke(
-                            r.rect.expand(2.0),
-                            3.0,
-                            egui::Stroke::new(4.0_f32, style::SAFFRON.gamma_multiply(0.14)),
-                            egui::StrokeKind::Outside,
-                        );
-                        ui.painter().rect_filled(
-                            egui::Rect::from_min_size(
-                                r.rect.min,
-                                Vec2::new(style::ON_DECK_RAIL, r.rect.height()),
-                            ),
-                            0.0,
-                            style::SAFFRON,
-                        );
-                    }
-                    if r.clicked() {
-                        crate::books::close_preview(app);
-                        app.selected_doc = *id;
-                        app.selected_slide = doc.slides.first().map(|s| s.id);
-                        if let Some(slide) = app.selected_slide {
-                            crate::books::remember_cue(app, *id, slide);
-                        }
-                    }
-                    if app.selected_doc == *id && (!app.present || app.library_tab == 1) {
-                        ui.horizontal(|ui| {
-                            if app.library_tab == 1 {
-                                if ui.small_button("Add to order").clicked()
-                                    && append_playlist_item(&mut app.project, *id)
-                                {
-                                    app.mark();
-                                }
-                                if !app.present && ui.small_button("Delete").clicked() {
-                                    app.confirm_delete = Some(*id);
-                                }
-                            } else {
-                                if !app.present && ui.small_button("Up").clicked() && index > 0 {
-                                    app.project.playlist.swap(index, index - 1);
-                                    app.mark();
-                                }
-                                if !app.present
-                                    && ui.small_button("Down").clicked()
-                                    && index + 1 < app.project.playlist.len()
-                                {
-                                    app.project.playlist.swap(index, index + 1);
-                                    app.mark();
-                                }
-                                if !app.present && ui.small_button("Remove").clicked() {
-                                    app.project.playlist.remove(index);
-                                    app.mark();
-                                }
-                            }
-                        });
-                        if !app.present
-                            && let Some(d) = app.project.documents.iter_mut().find(|d| d.id == *id)
-                        {
-                            ui.text_edit_singleline(&mut d.name);
-                        }
-                    }
-                });
-            }
-            if shown == 0 {
-                if docs.is_empty() {
-                    ui.label(if app.library_tab == 1 {
-                        "No documents yet — create or import a presentation."
-                    } else {
-                        "Running order is empty — add a document from Library."
-                    });
-                } else {
-                    ui.label("No matching documents. Clear search to see the full list.");
-                }
-            }
-        });
+    let order = app.library_tab == 0;
+    if order {
+        add_header(app, ui, !docs.is_empty());
+    }
+    if order && docs.is_empty() {
+        empty_running_order(app, ui);
+    } else {
+        document_rows(app, ui, &docs, order);
+    }
     if ui.button("New document").clicked() {
         let mut doc = Document::new("New document");
         if let Some(t) = app.project.themes.first() {
@@ -196,6 +79,294 @@ pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
                     name: "New macro".into(),
                     actions: Vec::new(),
                 });
+            }
+        });
+}
+const ROW_HEIGHT: f32 = 56.0;
+
+fn add_header(app: &mut LumenApp, ui: &mut egui::Ui, has_items: bool) {
+    if has_items
+        && ui
+            .add_sized(
+                [ui.available_width(), style::CONTROL],
+                egui::Button::new("Add files…"),
+            )
+            .clicked()
+    {
+        app.start_add(None);
+    }
+    if let Some((done, total)) = app.add_progress {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(format!("Adding {done} of {total}…"));
+        });
+    } else if let Some(notice) = app.add_notice.clone() {
+        ui.horizontal_wrapped(|ui| {
+            let color = if notice.contains("skipped") {
+                style::WARN
+            } else {
+                style::TEXT_DIM
+            };
+            ui.colored_label(color, notice);
+            if ui.small_button("Dismiss").clicked() {
+                app.add_notice = None;
+            }
+        });
+    }
+}
+
+fn empty_running_order(app: &mut LumenApp, ui: &mut egui::Ui) {
+    let height = (ui.available_height() - 210.0).clamp(180.0, 320.0);
+    let hovering = ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
+    let stroke = if hovering {
+        egui::Stroke::new(2.0_f32, style::SAFFRON)
+    } else {
+        egui::Stroke::new(1.0_f32, style::LINE)
+    };
+    egui::Frame::new()
+        .stroke(stroke)
+        .corner_radius(6.0)
+        .inner_margin(16.0)
+        .show(ui, |ui| {
+            ui.set_min_size(Vec2::new(ui.available_width(), height - 32.0));
+            ui.vertical_centered(|ui| {
+                ui.add_space(height * 0.15);
+                ui.label(style::icon('\u{e4c0}', 32.0).color(style::TEXT_DIM));
+                ui.label("Drop videos, pictures, PowerPoints or PDFs here");
+                if ui.button("Add files…").clicked() {
+                    app.start_add(None);
+                }
+            });
+        });
+}
+
+fn document_rows(app: &mut LumenApp, ui: &mut egui::Ui, docs: &[Uuid], reorder: bool) {
+    let next = app.runtime.peek_next(&app.project);
+    let images = app.thumbnails.images();
+    egui::ScrollArea::vertical()
+        .id_salt("library-list")
+        .max_height((ui.available_height() - 210.0).max(100.0))
+        .show(ui, |ui| {
+            let mut rects = Vec::new();
+            let mut dragged: Option<(usize, bool)> = None;
+            for (index, id) in docs.iter().enumerate() {
+                let Some(doc) = app.project.document(*id) else {
+                    continue;
+                };
+                let (name, count, kind) = (
+                    doc.name.clone(),
+                    doc.slides.len(),
+                    crate::add::doc_kind(doc),
+                );
+                ui.push_id(index, |ui| {
+                    let on_deck = next.as_ref().is_some_and(|n| n.document_id == *id);
+                    let live = app
+                        .runtime
+                        .output
+                        .live
+                        .as_ref()
+                        .is_some_and(|n| n.document_id == *id);
+                    let selected = app.selected_doc == *id && !crate::books::has_preview(app);
+                    let (rect, r) = ui.allocate_exact_size(
+                        Vec2::new(ui.available_width(), ROW_HEIGHT),
+                        if reorder {
+                            egui::Sense::click_and_drag()
+                        } else {
+                            egui::Sense::click()
+                        },
+                    );
+                    rects.push(rect);
+                    if selected {
+                        ui.painter()
+                            .rect_filled(rect, 3.0, style::SAFFRON.gamma_multiply(0.15));
+                    } else if r.hovered() || r.dragged() {
+                        ui.painter().rect_filled(rect, 3.0, style::RAISED);
+                    }
+                    if selected || r.has_focus() {
+                        ui.painter().rect_stroke(
+                            rect,
+                            3.0,
+                            egui::Stroke::new(
+                                if r.has_focus() { 2.0_f32 } else { 1.0_f32 },
+                                style::SAFFRON,
+                            ),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                    let mut x = rect.left() + 6.0;
+                    if reorder {
+                        ui.painter().text(
+                            egui::pos2(x + 6.0, rect.center().y),
+                            egui::Align2::CENTER_CENTER,
+                            '\u{eae2}',
+                            egui::FontId::new(16.0, egui::FontFamily::Name("Phosphor".into())),
+                            style::TEXT_DIM,
+                        );
+                        x += 16.0;
+                        if r.dragged() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                        } else if r.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                        }
+                    }
+                    let thumb = egui::Rect::from_min_size(
+                        egui::pos2(x, rect.top() + 6.0),
+                        Vec2::new(44.0 * 16.0 / 9.0, 44.0),
+                    );
+                    if ui.is_rect_visible(rect) {
+                        let live_slide = app
+                            .project
+                            .document(*id)
+                            .and_then(|d| d.slides.first())
+                            .and_then(|slide| {
+                                app.project.theme(slide.theme_id).map(|theme| {
+                                    lumen_core::LiveSlide {
+                                        document_id: *id,
+                                        document_name: name.clone(),
+                                        slide: slide.clone(),
+                                        theme: theme.clone(),
+                                    }
+                                })
+                            });
+                        let texture = live_slide
+                            .as_ref()
+                            .and_then(|l| app.thumbnail(&l.slide.background));
+                        render::paint_preview(
+                            ui,
+                            thumb,
+                            live_slide.as_ref(),
+                            texture.as_ref(),
+                            &images,
+                        );
+                        ui.painter().rect_stroke(
+                            thumb,
+                            0.0,
+                            egui::Stroke::new(1.0_f32, style::LINE),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                    let text_x = thumb.right() + 8.0;
+                    let label = crate::books::document_label(&name);
+                    ui.scope_builder(
+                        egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
+                            egui::pos2(text_x, rect.top() + 2.0),
+                            egui::pos2(rect.right() - 6.0, rect.top() + 30.0),
+                        )),
+                        |ui| {
+                            if crate::text::contains_gujarati(label) {
+                                crate::text::gu_label(ui, label, style::BODY);
+                            } else {
+                                ui.add(
+                                    egui::Label::new(RichText::new(label).size(style::BODY))
+                                        .truncate(),
+                                );
+                            }
+                        },
+                    );
+                    let line = rect.top() + 43.0;
+                    ui.painter().text(
+                        egui::pos2(text_x + 8.0, line),
+                        egui::Align2::CENTER_CENTER,
+                        kind.icon(),
+                        egui::FontId::new(14.0, egui::FontFamily::Name("Phosphor".into())),
+                        style::TEXT_DIM,
+                    );
+                    if live {
+                        let pill = egui::Rect::from_min_size(
+                            egui::pos2(text_x + 22.0, line - 8.0),
+                            Vec2::new(38.0, 16.0),
+                        );
+                        ui.painter().rect_filled(pill, 8.0, style::LIVE);
+                        ui.painter().text(
+                            pill.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "LIVE",
+                            egui::FontId::proportional(style::CAPTION),
+                            style::WHITE,
+                        );
+                    } else {
+                        ui.painter().text(
+                            egui::pos2(text_x + 22.0, line),
+                            egui::Align2::LEFT_CENTER,
+                            format!("{count} slide{}", if count == 1 { "" } else { "s" }),
+                            egui::FontId::proportional(style::CAPTION),
+                            style::TEXT_DIM,
+                        );
+                    }
+                    if on_deck {
+                        ui.painter().rect_stroke(
+                            rect.expand(2.0),
+                            3.0,
+                            egui::Stroke::new(4.0_f32, style::SAFFRON.gamma_multiply(0.14)),
+                            egui::StrokeKind::Outside,
+                        );
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_size(
+                                rect.min,
+                                Vec2::new(style::ON_DECK_RAIL, rect.height()),
+                            ),
+                            0.0,
+                            style::SAFFRON,
+                        );
+                    }
+                    if reorder && (r.dragged() || r.drag_stopped()) {
+                        dragged = Some((index, r.drag_stopped()));
+                    }
+                    if r.clicked() {
+                        crate::books::close_preview(app);
+                        app.select_document(*id);
+                        if let Some(slide) = app.selected_slide {
+                            crate::books::remember_cue(app, *id, slide);
+                        }
+                    }
+                    r.on_hover_text(label);
+                    if app.selected_doc == *id && (!app.present || app.library_tab == 1) {
+                        ui.horizontal(|ui| {
+                            if app.library_tab == 1 {
+                                if ui.small_button("Add to order").clicked()
+                                    && append_playlist_item(&mut app.project, *id)
+                                {
+                                    app.mark();
+                                }
+                                if !app.present && ui.small_button("Delete").clicked() {
+                                    app.confirm_delete = Some(*id);
+                                }
+                            } else if !app.present && ui.small_button("Remove from order").clicked()
+                            {
+                                app.remove_item(index);
+                            }
+                        });
+                        if !app.present
+                            && let Some(d) = app.project.documents.iter_mut().find(|d| d.id == *id)
+                        {
+                            ui.text_edit_singleline(&mut d.name);
+                        }
+                    }
+                });
+            }
+            if let Some((from, released)) = dragged
+                && rects.len() == docs.len()
+                && let Some(pointer) = ui.ctx().pointer_latest_pos()
+            {
+                let slot = crate::add::list_slot(&rects, pointer);
+                let y = match slot {
+                    0 => rects[0].top() - style::GAP / 2.0,
+                    s if s == rects.len() => rects[s - 1].bottom() + style::GAP / 2.0,
+                    s => (rects[s - 1].bottom() + rects[s].top()) / 2.0,
+                };
+                ui.painter().line_segment(
+                    [
+                        egui::pos2(rects[0].left(), y),
+                        egui::pos2(rects[0].right(), y),
+                    ],
+                    egui::Stroke::new(2.0_f32, style::SAFFRON),
+                );
+                if released {
+                    app.move_running_order(from, crate::add::slot_to_index(from, slot));
+                }
+            }
+            if docs.is_empty() {
+                ui.label("No documents yet — create or import a presentation.");
             }
         });
 }
@@ -321,15 +492,25 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical()
         .id_salt("cue-grid")
         .show(ui, |ui| {
-            for chunk in slides.chunks(columns) {
+            let mut tiles = Vec::new();
+            let mut dragged: Option<(usize, bool)> = None;
+            for (row, chunk) in slides.chunks(columns).enumerate() {
                 ui.horizontal_top(|ui| {
-                    for slide in chunk {
+                    for (column, slide) in chunk.iter().enumerate() {
                         ui.vertical(|ui| {
                             ui.set_width(width);
                             let (rect, r) = ui.allocate_exact_size(
                                 Vec2::new(width, width * 9.0 / 16.0),
-                                egui::Sense::click(),
+                                if app.present {
+                                    egui::Sense::click()
+                                } else {
+                                    egui::Sense::click_and_drag()
+                                },
                             );
+                            tiles.push(rect);
+                            if !app.present && (r.dragged() || r.drag_stopped()) {
+                                dragged = Some((row * columns + column, r.drag_stopped()));
+                            }
                             let cue =
                                 app.project
                                     .theme(slide.theme_id)
@@ -414,13 +595,34 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
                                             .background_color(style::LIVE),
                                     );
                                 } else if on_deck {
-                                    ui.colored_label(style::SAFFRON, "On deck");
+                                    ui.colored_label(style::SAFFRON, "Up next");
                                 }
                             });
                         });
                     }
                 });
                 ui.add_space(style::GAP);
+            }
+            if let Some((from, released)) = dragged
+                && let Some(pointer) = ui.ctx().pointer_latest_pos()
+                && let Some((nearest, after)) = crate::add::grid_target(&tiles, pointer)
+            {
+                let tile = tiles[nearest];
+                let x =
+                    if after { tile.right() } else { tile.left() } + if after { 4.0 } else { -4.0 };
+                ui.painter().line_segment(
+                    [egui::pos2(x, tile.top()), egui::pos2(x, tile.bottom())],
+                    egui::Stroke::new(3.0_f32, style::SAFFRON),
+                );
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                if released {
+                    let to = crate::add::slot_to_index(from, nearest + usize::from(after));
+                    let moved = app.project.documents[index].slides.get(from).map(|s| s.id);
+                    if crate::add::move_item(&mut app.project.documents[index].slides, from, to) {
+                        app.selected_slide = moved;
+                        app.mark();
+                    }
+                }
             }
         });
 }

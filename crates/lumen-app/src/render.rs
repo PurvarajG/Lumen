@@ -185,14 +185,7 @@ fn paint_scene(
             Background::Image { .. } | Background::Video { .. } | Background::Pdf { .. }
         )
     {
-        let image_rect = if matches!(
-            live.slide.background,
-            Background::Image { .. } | Background::Pdf { .. }
-        ) {
-            fitted(canvas, texture.size_vec2())
-        } else {
-            canvas
-        };
+        let image_rect = fitted(canvas, texture.size_vec2());
         painter.image(
             texture.id(),
             image_rect,

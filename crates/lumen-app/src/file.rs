@@ -18,6 +18,8 @@ pub enum FileResult {
     ),
     Autosave(u64, u64, PathBuf, Result<(), String>),
     PickMedia(Option<PathBuf>, bool),
+    AddProgress(u64, usize, usize),
+    Added(u64, Option<crate::add::AddBatch>),
 }
 pub enum FileAction {
     Open(u64),
@@ -27,6 +29,8 @@ pub enum FileAction {
     Recovery(u64, Option<PathBuf>),
     Autosave(u64, u64, PathBuf, Box<Project>),
     PickMedia(bool),
+    /// Add files to the running order; `None` paths opens the multi-select picker.
+    Add(u64, Option<Vec<PathBuf>>, uuid::Uuid),
 }
 
 pub fn launch(action: FileAction, tx: Sender<FileResult>, repaint_ctx: Context) {
@@ -101,6 +105,21 @@ pub fn launch(action: FileAction, tx: Sender<FileResult>, repaint_ctx: Context) 
                 };
                 let _ = tx.send(FileResult::PickMedia(result, video));
             }
+            FileAction::Add(id, paths, theme) => {
+                let picked = paths.or_else(|| {
+                    rfd::FileDialog::new()
+                        .add_filter("Media, slides, songs and audio", &crate::add::EXTENSIONS)
+                        .pick_files()
+                });
+                let batch = picked.map(|paths| {
+                    let plan = crate::add::plan_additions(&crate::add::expand_paths(&paths));
+                    crate::add::build_batch(&plan, theme, |done, total| {
+                        let _ = tx.send(FileResult::AddProgress(id, done, total));
+                        repaint_ctx.request_repaint();
+                    })
+                });
+                let _ = tx.send(FileResult::Added(id, batch));
+            }
         }
         repaint_ctx.request_repaint();
     });
@@ -110,7 +129,7 @@ pub fn channel() -> (Sender<FileResult>, Receiver<FileResult>) {
     mpsc::channel()
 }
 
-fn import_presentation(
+pub(crate) fn import_presentation(
     path: &std::path::Path,
     theme: uuid::Uuid,
 ) -> Result<lumen_interchange::ImportReport, String> {

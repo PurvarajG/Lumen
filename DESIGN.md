@@ -12,7 +12,7 @@ Mode: **Operate** (impeccable). Taste dials: DESIGN_VARIANCE 3, MOTION_INTENSITY
   - `live` #E5484D LIVE state only, `live_ink` #FFFFFF
   - `ok` #46A758 running timer/connected, `warn` #F5B83D timer warning, `info` #5B9BD5 neutral notices
 - **Density:** 8 pt grid; control height 28 pt (primary transport 40 pt); panel padding 12; group gap 8; section gap 20.
-- **Signature move — the saffron "on deck" rail:** the next cue to go live carries a 3 pt saffron rail and a soft saffron glow in the cue grid and in the running order, so the operator always sees what Next will send. LIVE is a red pill + red outline only on the cue currently on air. Nothing else uses saffron fill except the primary "Go live" action.
+- **Signature move — the saffron "up next" rail:** the next cue to go live carries a 3 pt saffron rail and a soft saffron glow in the cue grid and in the running order, so the operator always sees what Next will send. LIVE is a red pill + red outline only on the cue currently on air. Nothing else uses saffron fill except the primary "Go live" action.
 
 ## Layout (Present mode, default)
 
