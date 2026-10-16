@@ -1,0 +1,46 @@
+# Lumen design system (operator console)
+
+Mode: **Operate** (impeccable). Taste dials: DESIGN_VARIANCE 3, MOTION_INTENSITY 2, VISUAL_DENSITY 6. Design read: native macOS live-presentation console for sabha AV volunteers in a dim room, calm dark language, standard egui controls, one saffron signature.
+
+## World (type, palette, density, one signature move)
+
+- **Type:** Poppins for all English/Latin text, UI and slides (bundled, OFL; Regular, Medium, SemiBold, Bold + Italic). ChitraUni for all Gujarati, UI and slides, loaded at runtime from the user's installed fonts (`~/Library/Fonts`, `/Library/Fonts`; commercial © Summit Information Technologies, never bundled or committed); bundled Noto Sans Gujarati (OFL) is the fallback when ChitraUni is not installed, and the app shows a one-line notice in Settings saying which Gujarati face is active. Gujarati is always shaped through lumen-text, including in UI lists. Scale (logical pt): 11 caption, 13 body, 15 section heading (semibold), 20 panel title, 28 live clock. Tabular numerals for clocks/timers. Never below 11.
+- **Palette (tokens in `style.rs`, the only place colours are defined):**
+  - `bg` #121316 window ground, `panel` #1A1C20, `raised` #23262B, `line` #2E3238 (1 px separators only)
+  - `text` #ECE8E1 warm white, `text_dim` #A39E96 (≥4.5:1 on panel), `text_faint` #77726B (captions only, ≥3:1)
+  - `saffron` #F2A33A signature / primary action / selection, `saffron_ink` #1A1206 text on saffron
+  - `live` #E5484D LIVE state only, `live_ink` #FFFFFF
+  - `ok` #46A758 running timer/connected, `warn` #F5B83D timer warning, `info` #5B9BD5 neutral notices
+- **Density:** 8 pt grid; control height 28 pt (primary transport 40 pt); panel padding 12; group gap 8; section gap 20.
+- **Signature move — the saffron "on deck" rail:** the next cue to go live carries a 3 pt saffron rail and a soft saffron glow in the cue grid and in the running order, so the operator always sees what Next will send. LIVE is a red pill + red outline only on the cue currently on air. Nothing else uses saffron fill except the primary "Go live" action.
+
+## Layout (Present mode, default)
+
+Header row: project name · Prepare / Present segmented switch · output status pills (Audience, Stage, Remote) · Save state.
+
+Three regions:
+1. **Left rail (280 pt, resizable):** Search field on top (books + library + playlist, results grouped), then Running order (playlist) and Library tabs, then Books (downloaded anirdesh books) tab.
+2. **Centre:** large Preview of the selected/on-deck cue with its label, then the cue grid (16:9 thumbnails, width-aware columns, labels below, LIVE / on-deck states).
+3. **Right column (360 pt):** Live output monitor (what the audience sees, with a red LIVE caption), transport (Previous · Go live/Next · Clear group), then tabbed tools: Timers · Messages · Props · Audio · Stage.
+
+Prepare mode swaps the right column's tools for the slide inspector (text, box, style, objects, background, audio, transition, actions) and enables editing affordances in the grid; transport stays visible but secondary.
+
+## States (every surface)
+
+Hover (raised + 1 step lighter), pressed, focused (2 pt saffron focus ring, keyboard visible), disabled (text_faint, no hover), loading (inline spinner + verb, never a blocking modal), empty (one sentence + the one action that fixes it, e.g. "No books downloaded yet — Download books"), error (inline, names problem + recovery, `live`-red icon only for on-air problems, `warn` otherwise).
+
+## Controls and copy
+
+Standard egui widgets only: buttons, tabs/segmented, text fields, combo boxes, sliders, checkboxes, tables/lists. Icons from one embedded line-icon set (Lucide/Phosphor via a font, OFL/MIT) at one stroke weight — no emoji or Unicode glyphs as icons. Labels name the action ("Go live", "Clear slide", "Download Vachanamrut"). Errors: "Couldn't open kirtan.mp3 — file was moved. Choose file…".
+
+## Keyboard (Present)
+
+Space / → / Page Down: next · ← / Page Up: previous · Return: go live with selection · F1 clear all · F2 clear slide · F3 clear media · F4 clear props · F5 clear audio · F6 clear messages · B blackout · Cmd+F search · Cmd+Z / Cmd+Shift+Z undo/redo. Shortcuts never fire while a text field has focus.
+
+## Motion
+
+Only output transitions (cut, dissolve, fade through black, push) and a 120 ms hover/selection ease. No UI animation delays a cue.
+
+## Refuse
+
+Cards nested in cards, eyebrow labels, gradient text, glass, coloured side borders > 1 pt (the saffron rail is the single exception and is the signature), emoji icons, grey-on-grey low contrast, modals for non-destructive tasks.
