@@ -29,3 +29,15 @@ The exact RTF payload is preserved. A lightweight importer can use the repeated 
 ## Limits
 
 The custom decoder uses wire framing and recursive parseability, not a vendor schema. A length-delimited payload that happens to parse as nested wire data can be a false submessage candidate, so field paths are empirical paths through this sample. Parent context establishes that this authored fixture contains two slides and their text/order; static bytes alone do not prove that field 13 is the slide collection in every ProPresenter file. UUID semantics and the dimensions' meanings remain inferred as described above. This single sample must not be used to claim compatibility with arbitrary `.pro` files or to emit modified ProPresenter documents.
+
+## Unicode follow-up fixture
+
+The parent subsequently edited only the second cue of the owned research presentation through the native Reflow UI and saved another local copy as `.local/research/Lumen-Unicode-Fixture.pro` (2479 bytes; SHA-256 `36c9df703718d93f731f3f2c69c0a620e8526556c372020d7134766ef3a1c012`). The original fixture copy above remains unchanged. The new file again parses completely with two top-level field-13 records, and the same nested RTF path extracts the known second-cue text:
+
+```text
+Café — naïve
+Unicode: Ω שלום 😀
+Escapes: {brace} \
+```
+
+The extracted `.local/research/unicode-slide-2-1.rtf` converted with macOS `textutil -convert txt -stdout` matches those authored characters, line breaks, braces and backslash. The wire tree and trace are retained in `.local/research/Lumen-Unicode-Fixture-wire.json` and `unicode-wire-trace.txt`. A Rust importer must verify these cases independently; system textutil success alone does not verify its parser. The source presentation in ProPresenter's library now contains this second-cue variant.

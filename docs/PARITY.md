@@ -6,17 +6,17 @@ States: **Verified** = exercised through tests or native UI; **Building** = impl
 
 | Capability | Lumen status | Evidence / next acceptance check |
 |---|---|---|
-| Editable slides and reusable themes | Core verified; UI building | Core models validated; edit/live isolation test passes |
-| Library and playlist document order | Core verified; UI building | Cross-document cue navigation and boundary tests pass |
-| Native operator workbench | Planned | Launch and exercise editing/cueing on macOS |
-| Independent audience/stage windows | Planned | Visually compare output with preview; close/reopen independently |
-| Image/video backgrounds | Building | Generated media decoding and owned-child lifecycle tests |
-| Countdown clocks | Core verified; UI building | Pause/resume/reset/expiry tests pass |
-| Macros and cue actions | Core verified; UI building | Bounded ordered atomic action tests pass |
-| Text import | Core verified; UI building | Blank-line/CRLF import tests pass |
-| Versioned project save/load | Core verified; UI building | Roundtrip, replacement, malformed/oversized file tests pass |
-| ProPresenter native document import | Planned | Registered types observed; actual schemas not established |
-| OpenLyrics interchange | Planned | Parse/export real fixture; preserve ordering/line breaks |
+| Editable slides and reusable themes | Verified foundation | One text object; theme font/colour/alignment; native edit/live isolation exercised |
+| Library and playlist document order | Verified | Core navigation tests and native library/playlist controls |
+| Native operator workbench | Verified on Apple Silicon macOS 26.7 | Final dark UI inspected; blank-show creation and cue editing exercised |
+| Independent audience/stage windows | Verified windowed foundation | Current/next, notes/message/countdown and close/reopen exercised; fullscreen control implemented, external display mapping unverified |
+| Image/video backgrounds | Video verified; image adapter implemented | Generated real video output, EOF/loop/stop/drop tests; separate untriggered-media thumbnails absent |
+| Countdown clocks | Verified | Deterministic timer tests and native stage progression |
+| Macros and cue actions | Verified foundation | Atomic ordered core tests; native ClearAll media cleanup; no macro editor |
+| Text import | Core verified; UI wired | Blank-line/CRLF tests; UTF-8 txt/md picker with 4MiB limit |
+| Versioned project save/load | Verified | Roundtrip/replacement/bounds tests; native Open and Save/Quit exercised |
+| ProPresenter native document import | Designed, not implemented | Original two-cue/Unicode fixtures reveal limited text paths; arbitrary schemas/fidelity unverified |
+| OpenLyrics interchange | Designed, not implemented | Bounded parser/export contract written; no shipped importer |
 | Layered slide objects / rich text | Planned | Independent object positioning, font/style spans, bounds tests |
 | Transitions | Planned | Measure and inspect actual output fades |
 | Undo/redo and crash recovery | Planned | Exercise edit/save/reopen and recovery scenarios |
@@ -29,6 +29,6 @@ States: **Verified** = exercised through tests or native UI; **Building** = impl
 | Remote control / API | Planned | Local authenticated control and cue update tests |
 | Scripture / licensed content services | Planned | User-supplied or licensed sources and import verification |
 | Cloud/team synchronization | Planned | Conflict/persistence/offline/recovery design and tests |
-| Packaged signed releases / other OSs | Planned | Packaged app launch, notarization and platform CI |
+| Packaged signed releases / other OSs | Local macOS bundle verified | Ad-hoc signed development bundle; optimized release, notarization and other OSs unverified |
 
 Research findings and their limitations are in docs/research. Detailed staged architecture is in docs/superpowers/specs/2026-10-16-lumen-design.md.

@@ -1,0 +1,285 @@
+{
+  "schema_version": 1,
+  "name": "Sunday Gathering",
+  "documents": [
+    {
+      "id": "f9567f59-4f63-4501-aa18-df69d5005f96",
+      "name": "Welcome",
+      "slides": [
+        {
+          "id": "67bbe8f5-0b4e-47d7-bc06-3ff9158862bf",
+          "label": "Welcome",
+          "text": "Welcome\nWe're glad you're here.",
+          "notes": "Stand by for the opening.",
+          "theme_id": "830856c3-b023-49aa-8584-b22732bce029",
+          "background": {
+            "Solid": [
+              18,
+              22,
+              30,
+              255
+            ]
+          },
+          "transition": "Cut",
+          "actions": []
+        },
+        {
+          "id": "63af97f9-829b-453f-9767-688ae1d3b5d2",
+          "label": "Gather",
+          "text": "Take a moment to settle in.",
+          "notes": "House lights may lower.",
+          "theme_id": "830856c3-b023-49aa-8584-b22732bce029",
+          "background": {
+            "Solid": [
+              18,
+              22,
+              30,
+              255
+            ]
+          },
+          "transition": "Cut",
+          "actions": []
+        },
+        {
+          "id": "0b5a7b77-6943-41af-9d31-fbc374dbf2a4",
+          "label": "Begin",
+          "text": "Let's begin.",
+          "notes": "Trigger when the room is ready.",
+          "theme_id": "830856c3-b023-49aa-8584-b22732bce029",
+          "background": {
+            "Solid": [
+              18,
+              22,
+              30,
+              255
+            ]
+          },
+          "transition": "Cut",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "6a9b7f0a-c9c8-4010-a17b-4157a86eac03",
+      "name": "Song",
+      "slides": [
+        {
+          "id": "fd0d4fcb-6f48-4a68-a6fe-158ccfbf048d",
+          "label": "Verse",
+          "text": "We gather in the morning light,\nWith open hands and hearts made new.",
+          "notes": "Check the band is ready.",
+          "theme_id": "062b0c66-ebe9-4e04-aaf2-5dfbe22cf4c3",
+          "background": {
+            "Solid": [
+              18,
+              22,
+              30,
+              255
+            ]
+          },
+          "transition": "Cut",
+          "actions": []
+        },
+        {
+          "id": "4e56c632-9dc7-4c26-9683-8e83ee61ea82",
+          "label": "Chorus",
+          "text": "Hope rises up; we sing as one.",
+          "notes": "Keep this cue through the refrain.",
+          "theme_id": "062b0c66-ebe9-4e04-aaf2-5dfbe22cf4c3",
+          "background": {
+            "Solid": [
+              18,
+              22,
+              30,
+              255
+            ]
+          },
+          "transition": "Cut",
+          "actions": []
+        },
+        {
+          "id": "c286cd6b-370a-47b0-9905-32f96d6ab9cf",
+          "label": "Bridge",
+          "text": "In every season, still we stand.",
+          "notes": "Watch the director for the return.",
+          "theme_id": "062b0c66-ebe9-4e04-aaf2-5dfbe22cf4c3",
+          "background": {
+            "Solid": [
+              18,
+              22,
+              30,
+              255
+            ]
+          },
+          "transition": "Cut",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "id": "f206b5a3-22cb-4613-ae6b-473fcd3ca5d9",
+      "name": "Announcements",
+      "slides": [
+        {
+          "id": "4227f5f6-b122-44a9-b971-aff552bf57a6",
+          "label": "Community",
+          "text": "Community lunch\nSunday after the gathering",
+          "notes": "Mention dietary options.",
+          "theme_id": "00db5e4a-95b1-4f90-b61e-df1ac07fc902",
+          "background": {
+            "Solid": [
+              18,
+              22,
+              30,
+              255
+            ]
+          },
+          "transition": "Cut",
+          "actions": []
+        },
+        {
+          "id": "01ab2246-1641-4ad9-bcc1-741efbdba410",
+          "label": "Next week",
+          "text": "Next week\nA new series begins",
+          "notes": "Invite people to bring a friend.",
+          "theme_id": "00db5e4a-95b1-4f90-b61e-df1ac07fc902",
+          "background": {
+            "Solid": [
+              18,
+              22,
+              30,
+              255
+            ]
+          },
+          "transition": "Cut",
+          "actions": []
+        },
+        {
+          "id": "073a3482-5cc8-433b-89e6-06e2d3ffaaa5",
+          "label": "Thanks",
+          "text": "Thank you for being here.",
+          "notes": "Close with the house lights.",
+          "theme_id": "00db5e4a-95b1-4f90-b61e-df1ac07fc902",
+          "background": {
+            "Solid": [
+              18,
+              22,
+              30,
+              255
+            ]
+          },
+          "transition": "Cut",
+          "actions": []
+        }
+      ]
+    }
+  ],
+  "playlist": [
+    {
+      "id": "d045bf36-3475-472f-bcba-99f7d8ae6324",
+      "document_id": "f9567f59-4f63-4501-aa18-df69d5005f96"
+    },
+    {
+      "id": "d4713ff7-d92e-4d6f-a902-0ea5ffd5854a",
+      "document_id": "6a9b7f0a-c9c8-4010-a17b-4157a86eac03"
+    },
+    {
+      "id": "972dc5b9-5ad9-4760-8d70-9c4f13b3a191",
+      "document_id": "f206b5a3-22cb-4613-ae6b-473fcd3ca5d9"
+    }
+  ],
+  "themes": [
+    {
+      "id": "830856c3-b023-49aa-8584-b22732bce029",
+      "name": "Welcome",
+      "font_size": 64.0,
+      "text_color": [
+        245,
+        246,
+        248,
+        255
+      ],
+      "background_color": [
+        18,
+        22,
+        30,
+        255
+      ],
+      "align": "Center",
+      "vertical_align": "Middle"
+    },
+    {
+      "id": "062b0c66-ebe9-4e04-aaf2-5dfbe22cf4c3",
+      "name": "Song",
+      "font_size": 58.0,
+      "text_color": [
+        245,
+        246,
+        248,
+        255
+      ],
+      "background_color": [
+        12,
+        15,
+        22,
+        255
+      ],
+      "align": "Center",
+      "vertical_align": "Middle"
+    },
+    {
+      "id": "00db5e4a-95b1-4f90-b61e-df1ac07fc902",
+      "name": "Announcements",
+      "font_size": 52.0,
+      "text_color": [
+        245,
+        246,
+        248,
+        255
+      ],
+      "background_color": [
+        18,
+        22,
+        30,
+        255
+      ],
+      "align": "Left",
+      "vertical_align": "Top"
+    }
+  ],
+  "macros": [
+    {
+      "id": "3ea6aba5-aec7-4673-9a47-ec166c19e8f3",
+      "name": "Blackout",
+      "actions": [
+        {
+          "Blackout": true
+        }
+      ]
+    },
+    {
+      "id": "82f58103-2044-47a8-98fe-6412c92d7f29",
+      "name": "Restore output",
+      "actions": [
+        {
+          "Blackout": false
+        },
+        {
+          "ClearText": false
+        },
+        {
+          "StageMessage": "Welcome"
+        }
+      ]
+    },
+    {
+      "id": "21b9f82e-f68a-41b6-8eb9-eb5d6f17560f",
+      "name": "Quiet stage",
+      "actions": [
+        {
+          "StageMessage": "Please hold"
+        }
+      ]
+    }
+  ]
+}

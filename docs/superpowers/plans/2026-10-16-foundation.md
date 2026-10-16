@@ -24,12 +24,12 @@
 
 **Interfaces:** Read docs/briefs/core.md for the exact public contracts. Parent supplies workspace manifest. No UI dependencies.
 
-- [ ] Write tests proving snapshot isolation and ordered playlist navigation across documents, including empty and boundary cases.
-- [ ] Run `cargo test -p lumen-core` and capture the initial failure.
-- [ ] Implement the public models and runtime to meet those cases.
-- [ ] Add deterministic timer/macro tests and malformed project/storage/import tests, then implement those features.
-- [ ] Run `cargo test -p lumen-core` and `cargo clippy -p lumen-core --all-targets -- -D warnings`.
-- [ ] Save the final report to .local/reports/core.md; parent reviews source and verification output.
+- [x] Write tests proving snapshot isolation and ordered playlist navigation across documents, including empty and boundary cases.
+- [x] Run `cargo test -p lumen-core` and capture the initial failure.
+- [x] Implement the public models and runtime to meet those cases.
+- [x] Add deterministic timer/macro tests and malformed project/storage/import tests, then implement those features.
+- [x] Run `cargo test -p lumen-core` and `cargo clippy -p lumen-core --all-targets -- -D warnings`.
+- [x] Save the final report to .local/reports/core.md; parent reviews source and verification output.
 
 ## Task 2: Media adapter
 
@@ -37,11 +37,11 @@
 
 **Interfaces:** Read docs/briefs/media.md. Media adapter exports RGBA frames and owns child processes; no UI/core dependencies.
 
-- [ ] Test media probing/error behavior and frame sizing with a generated local FFmpeg test pattern.
-- [ ] Implement an off-thread decoder with a single latest frame, bounded stderr and explicit stop/drop cleanup.
-- [ ] Add pause/restart/loop/mute controls supported by the selected adapter and expose actual capabilities.
-- [ ] Verify lifecycle with a generated short video and run media crate tests/clippy.
-- [ ] Save report to .local/reports/media.md; parent reviews and runs integration verification.
+- [x] Test media probing/error behavior and frame sizing with a generated local FFmpeg test pattern.
+- [x] Implement an off-thread decoder with a single latest frame, bounded stderr and explicit stop/drop cleanup.
+- [x] Add pause/restart/loop/mute controls supported by the selected adapter and expose actual capabilities.
+- [x] Verify lifecycle with a generated short video and run media crate tests/clippy.
+- [x] Save report to .local/reports/media.md; parent reviews and runs integration verification.
 
 ## Task 3: Native application and outputs
 
@@ -49,19 +49,19 @@
 
 **Interfaces:** Consume the reviewed core/media public APIs. Read docs/briefs/app.md for UI requirements and exact behavior.
 
-- [ ] Implement the native workbench and document/slide editing, with cloned live render state.
-- [ ] Wire project load/save/text import dialogs and unsaved-change handling.
-- [ ] Implement original demo content, audience/stage viewports, keyboard controls, timer/macro controls and media rendering.
-- [ ] Build the app and run full workspace tests/clippy/format.
-- [ ] Launch the native app; inspect the workbench and both output viewports, correct defects found.
-- [ ] Package a local macOS .app and record runtime dependencies and unimplemented parity features.
+- [x] Implement the native workbench and document/slide editing, with cloned live render state.
+- [x] Wire project load/save/text import dialogs and unsaved-change handling.
+- [x] Implement original demo content, audience/stage viewports, keyboard controls, timer/macro controls and media rendering.
+- [x] Build the app and run full workspace tests/clippy/format.
+- [x] Launch the native app; inspect the workbench and both output viewports, correct defects found.
+- [x] Package a local macOS .app and record runtime dependencies and unimplemented parity features.
 
 ## Task 4: Integration and independent review
 
 **Files:** README.md, docs/STATUS.md, docs/research/*, relevant source fixes.
 
-- [ ] Have a fresh reviewer inspect source/diff, contracts and test coverage for correctness and reliability.
-- [ ] Fix actionable findings and rerun affected checks.
-- [ ] Run `cargo fmt --all -- --check`, `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo build -p lumen-app`.
-- [ ] Record actual output-window smoke checks, app artifact path, evidence limitations and the parity roadmap.
-- [ ] Commit only source, lockfile, original demo and docs. Keep tools, build products and raw research local.
+- [x] Have a fresh reviewer inspect source/diff, contracts and test coverage for correctness and reliability.
+- [x] Fix actionable findings and rerun affected checks.
+- [x] Run `cargo fmt --all -- --check`, `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo build -p lumen-app`.
+- [x] Record actual output-window smoke checks, app artifact path, evidence limitations and the parity roadmap.
+- [x] Commit only source, lockfile, original demo and docs. Keep tools, build products and raw research local.

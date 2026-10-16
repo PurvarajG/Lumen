@@ -1,26 +1,24 @@
 # Lumen Presenter status
 
-Objective: full standalone Rust alternative to ProPresenter. User authorized autonomous work on 2026-10-16.
+Objective: full standalone Rust alternative to ProPresenter. User authorized autonomous engineering and efficient model delegation on 2026-10-16. Latest steering: finish the build and use gpt-taste to fix the UI.
 
-## Current work
+## Delivered foundation
 
-- Reference app verified: ProPresenter 21.4 (352583705), universal Mach-O, /Applications/ProPresenter.app.
-- REA 6.5.0 installed locally; upstream shallow clone in .tools/rea; CLI used without restarting the chat.
-- Ghidra 12.1.4 and OpenJDK 21 installed through Homebrew; REA provider doctor passed. Rust stable 1.99.1 installed with rustfmt/clippy.
-- Architecture/spec and first milestone plan written. App is named Lumen Presenter; native Rust egui UI, portable domain core, FFmpeg media adapter.
-- Static REA artifact/plist/Mach-O research completed by a smaller model; native UI observations recorded. Focused Ghidra follow-up is analyzing an arm64 copy of ssAPI with a 2GiB heap and retained snapshot.
-- Core engine implemented by gpt-6-luna. Independent review requested Runtime serde and additional atomic-trigger/save-replacement/macro coverage; those changes were applied.
-- Core independent re-review passed specification and quality; committed as a380657.
-- Media adapter implemented by gpt-6-luna. Review reproduced and then verified fixes for an EOF cancellation deadlock and a spurious deliberate-stop error. Active/paused-drop reaping and error-path regressions added; independent re-review passed specification and quality.
-- An original two-slide reference fixture was created through ProPresenter's UI and inspected separately. Observed protobuf-wire-compatible field paths recover the two known RTF texts in order; broad `.pro` compatibility remains unverified.
+- Rust workspace with reviewed pure core, owned FFmpeg media adapter, and native egui/WGPU workbench. Larger models handled architecture/review; gpt-6-luna implemented modules. Parent completed final changes after worker usage exhaustion.
+- Core committed as a380657; media committed as c229612. App integration and the requested UI refinement complete the foundation milestone.
+- Native editor provides blank shows, editable title/documents/slides/themes, playlist order, text import, notes, macros, countdowns and stage messages. Editable state remains separate from cloned live output.
+- Audience/stage windows render independently. Video cancellation/EOF/retrigger, repaint, text anchoring, close/reopen and native unsaved Quit defects found in review were fixed and exercised.
+- gpt-taste guidance adapted to the Rust workbench: dark graphite, Geist, clear contrast/live states, large preview, consistent thumbnails and separate edit/stage inspector views. See UI.md.
+- Local bundle: `.local/dist/Lumen Presenter.app` (0.1.0 debug build, ad-hoc signed). FFmpeg remains an external media dependency. No reference app is needed to run Lumen.
 
 ## Verification
 
-- Parent ran `cargo test -p lumen-core`: 12 integration tests passed, 0 failed.
-- Parent ran `cargo clippy -p lumen-core --all-targets -- -D warnings`: passed.
-- Parent ran `cargo test -p lumen-media`: 11 unit plus 5 integration tests passed; no failures or skips. Parent reran media clippy with warnings denied: passed.
-- Native application and media adapter are not yet built. Full application verification is pending.
+Formatting, all 44 workspace tests, Clippy with warnings denied and native build passed. Parent exercised native editing/live isolation, generated video, outputs, countdown/message, save and Quit flows. Final independent source review reports no residual blocker. Full evidence and limitations: VERIFICATION.md.
 
-## Remaining parity work
+## Research
 
-See docs/superpowers/specs/2026-10-16-lumen-design.md for the complete milestone roadmap. Full parity is not complete at the foundation milestone.
+REA 6.5.0 and upstream source are local. Ghidra 12.1.4/OpenJDK21 doctor passed; focused native analysis completed. Reference app: ProPresenter 21.4 build352583705 at /Applications/ProPresenter.app, read-only except original test documents created through its UI. Static/native/UI findings and original Unicode fixtures are documented under research. Raw artifacts stay ignored in .local/research.
+
+## Remaining
+
+Full ProPresenter parity is not complete. PARITY.md tracks absent features. The next interchange milestone is designed but unimplemented: OpenLyrics plus explicitly experimental, text-only extraction from the observed ProPresenter fixture field paths. Rich layers, fades, undo/recovery, production audio/output adapters and service integrations remain future work. Do not advertise those as available.
