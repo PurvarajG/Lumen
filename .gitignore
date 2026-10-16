@@ -1,0 +1,7 @@
+/target/
+/.tools/
+/.local/
+/.gstack/
+/.superpowers/
+.DS_Store
+*.log
