@@ -84,7 +84,7 @@ impl AudioState {
     pub fn ui(&mut self, ui: &mut Ui) {
         self.poll();
         ui.heading("Audio");
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if ui.button("Add audio files").clicked() && self.pending.is_none() {
                 self.start_file_picker();
             }
@@ -93,7 +93,7 @@ impl AudioState {
                 self.stop();
             }
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("Output device");
             let selected = self.selected_device.as_deref().unwrap_or("System default");
             egui::ComboBox::from_id_salt("audio-output-device")
@@ -124,10 +124,13 @@ impl AudioState {
         if self.pending.is_some() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.add(egui::Spinner::new());
                 ui.label("Loading audio files or devices…");
             });
+        }
+        if self.devices.is_empty() && self.device_scan_started && self.pending.is_none() {
+            ui.label("No audio output device found. Connect a device, then Refresh.");
         }
         if self.bin.is_empty() {
             ui.label("No audio files added yet — Add audio files.");
@@ -137,7 +140,7 @@ impl AudioState {
         let mut volume_change = None;
         for (i, cue) in self.bin.iter_mut().enumerate() {
             ui.push_id(i, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(
                         cue.path
                             .file_name()

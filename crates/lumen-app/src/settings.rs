@@ -40,6 +40,12 @@ pub struct Settings {
     pub midi_port: Option<String>,
     pub midi_mappings: Vec<lumen_control::MidiMapping>,
     pub stage: StageOptions,
+    /// Selected monitor, stored by display name and pixel resolution.
+    pub audience_display: Option<crate::displays::DisplayKey>,
+    /// Selected monitor, stored by display name and pixel resolution.
+    pub stage_display: Option<crate::displays::DisplayKey>,
+    pub audience_fullscreen: bool,
+    pub stage_fullscreen: bool,
     #[serde(skip)]
     pub reveal_token: bool,
 }
@@ -55,6 +61,10 @@ impl Default for Settings {
             midi_port: None,
             midi_mappings: Vec::new(),
             stage: StageOptions::default(),
+            audience_display: None,
+            stage_display: None,
+            audience_fullscreen: false,
+            stage_fullscreen: false,
             reveal_token: false,
         }
     }
@@ -216,11 +226,11 @@ pub fn settings_panel(
     action.changed |= ui
         .checkbox(&mut settings.http_enabled, "Enable HTTP control")
         .changed();
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label("Bind address");
         action.changed |= ui.text_edit_singleline(&mut settings.http_addr).changed();
     });
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label("Token");
         action.changed |= ui
             .add(
@@ -242,7 +252,7 @@ pub fn settings_panel(
     action.changed |= ui
         .checkbox(&mut settings.osc_enabled, "Enable OSC")
         .changed();
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label("OSC address");
         action.changed |= ui.text_edit_singleline(&mut settings.osc_addr).changed();
     });
@@ -300,7 +310,7 @@ pub fn settings_panel(
     }
     let mut remove_mapping = None;
     for (index, mapping) in settings.midi_mappings.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("Ch");
             action.changed |= ui
                 .add(egui::DragValue::new(&mut mapping.channel).range(0..=15))
@@ -373,9 +383,13 @@ pub fn stage_options(ui: &mut Ui, stage: &mut StageOptions, project: &Project) -
                 changed = true;
             }
             for timer in &project.timers {
-                if ui
-                    .selectable_label(stage.timer == Some(timer.id), &timer.name)
-                    .clicked()
+                if crate::text::gu_selectable(
+                    ui,
+                    stage.timer == Some(timer.id),
+                    &timer.name,
+                    crate::style::BODY,
+                )
+                .clicked()
                 {
                     stage.timer = Some(timer.id);
                     changed = true;

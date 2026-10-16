@@ -32,8 +32,17 @@ pub struct OutputState {
     pub stage_message: String,
     #[serde(default)]
     pub props: Vec<Uuid>,
+    /// Trigger-time copies of prop definitions. `props` remains the stable ID API.
+    #[serde(default)]
+    pub prop_snapshots: Vec<crate::Prop>,
+    /// Trigger-time styles aligned with `props` and `prop_snapshots`.
+    #[serde(default)]
+    pub prop_theme_snapshots: Vec<Theme>,
     #[serde(default)]
     pub message: Option<Uuid>,
+    /// Trigger-time message template; timer tokens are resolved when rendered.
+    #[serde(default)]
+    pub message_snapshot: Option<String>,
     #[serde(default)]
     pub stop_audio_serial: u64,
     #[serde(default)]
@@ -172,8 +181,23 @@ impl Runtime {
         now_secs_of_day: u32,
     ) -> Option<String> {
         let msg = project.message(id)?;
-        let mut result = String::with_capacity(msg.text.len());
-        let mut rest = msg.text.as_str();
+        Some(self.render_message_template(project, &msg.text, now_secs_of_day))
+    }
+
+    /// Render the currently triggered message snapshot, resolving timer tokens live.
+    pub fn render_output_message(&self, project: &Project, now_secs_of_day: u32) -> Option<String> {
+        let template = self.output.message_snapshot.as_deref()?;
+        Some(self.render_message_template(project, template, now_secs_of_day))
+    }
+
+    fn render_message_template(
+        &self,
+        project: &Project,
+        template: &str,
+        now_secs_of_day: u32,
+    ) -> String {
+        let mut result = String::with_capacity(template.len());
+        let mut rest = template;
 
         // Replace {timer:<uuid>} tokens; unknown or malformed tokens stay literal.
         while let Some(start) = rest.find("{timer:") {
@@ -192,7 +216,7 @@ impl Runtime {
         }
         result.push_str(rest);
 
-        Some(result)
+        result
     }
 
     pub fn trigger(
@@ -323,6 +347,47 @@ impl Runtime {
         self.apply_actions(project, &actions)
     }
 
+    fn normalize_prop_snapshots(&mut self, project: &Project) {
+        let old_props = self.output.prop_snapshots.clone();
+        let old_themes = self.output.prop_theme_snapshots.clone();
+        let fallback_theme = self
+            .output
+            .live
+            .as_ref()
+            .map(|live| live.theme.clone())
+            .or_else(|| project.themes.first().cloned())
+            .unwrap_or_default();
+        self.output.prop_snapshots = self
+            .output
+            .props
+            .iter()
+            .map(|id| {
+                old_props
+                    .iter()
+                    .find(|snapshot| snapshot.id == *id)
+                    .cloned()
+                    .or_else(|| project.prop(*id).cloned())
+                    .unwrap_or_else(|| crate::Prop {
+                        id: *id,
+                        name: String::new(),
+                        objects: Vec::new(),
+                    })
+            })
+            .collect();
+        self.output.prop_theme_snapshots = self
+            .output
+            .prop_snapshots
+            .iter()
+            .map(|snapshot| {
+                old_props
+                    .iter()
+                    .position(|old| old.id == snapshot.id)
+                    .and_then(|index| old_themes.get(index).cloned())
+                    .unwrap_or_else(|| fallback_theme.clone())
+            })
+            .collect();
+    }
+
     fn validate_action_references(
         &self,
         project: &Project,
@@ -363,7 +428,10 @@ impl Runtime {
                     self.output.live = None;
                     self.output.clear_text = false;
                     self.output.props.clear();
+                    self.output.prop_snapshots.clear();
+                    self.output.prop_theme_snapshots.clear();
                     self.output.message = None;
+                    self.output.message_snapshot = None;
                     self.output.media_cleared = true;
                     self.output.audio_clear_serial = self.output.audio_clear_serial.wrapping_add(1);
                     self.output.stop_audio_serial = self.output.stop_audio_serial.wrapping_add(1);
@@ -412,18 +480,48 @@ impl Runtime {
                     }
                 }
                 CueAction::TriggerProp { id } => {
-                    if !self.output.props.contains(id) {
-                        self.output.props.push(*id);
+                    if let Some(prop) = project.prop(*id) {
+                        self.normalize_prop_snapshots(project);
+                        if let Some(index) =
+                            self.output.props.iter().position(|active| active == id)
+                        {
+                            // Retrigger refreshes an already-live prop in place.
+                            self.output.prop_snapshots[index] = prop.clone();
+                            let theme = self
+                                .output
+                                .live
+                                .as_ref()
+                                .map(|live| live.theme.clone())
+                                .or_else(|| project.themes.first().cloned())
+                                .unwrap_or_default();
+                            self.output.prop_theme_snapshots[index] = theme;
+                        } else {
+                            self.output.props.push(*id);
+                            self.output.prop_snapshots.push(prop.clone());
+                            self.output.prop_theme_snapshots.push(
+                                self.output
+                                    .live
+                                    .as_ref()
+                                    .map(|live| live.theme.clone())
+                                    .or_else(|| project.themes.first().cloned())
+                                    .unwrap_or_default(),
+                            );
+                        }
                     }
                 }
                 CueAction::ClearProps => {
                     self.output.props.clear();
+                    self.output.prop_snapshots.clear();
+                    self.output.prop_theme_snapshots.clear();
                 }
                 CueAction::ShowMessage { id } => {
                     self.output.message = Some(*id);
+                    self.output.message_snapshot =
+                        project.message(*id).map(|message| message.text.clone());
                 }
                 CueAction::ClearMessage | CueAction::ClearMessages => {
                     self.output.message = None;
+                    self.output.message_snapshot = None;
                 }
                 CueAction::StopAudio | CueAction::ClearAudio => {
                     self.output.stop_audio_serial = self.output.stop_audio_serial.wrapping_add(1);
@@ -466,4 +564,127 @@ fn playlist_cues(project: &Project) -> Vec<(Uuid, Uuid)> {
         .filter_map(|item| project.document(item.document_id))
         .flat_map(|doc| doc.slides.iter().map(move |slide| (doc.id, slide.id)))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{CueAction, Macro, MessageTemplate, Prop, Rect, SlideObject, TextAlign, TextStyle};
+
+    fn fixture() -> (Project, Uuid, Uuid, Uuid) {
+        let mut project = Project::demo();
+        let prop_id = Uuid::new_v4();
+        let message_id = Uuid::new_v4();
+        let timer_id = project.timers[0].id;
+        project.props.push(Prop {
+            id: prop_id,
+            name: "Original prop".into(),
+            objects: vec![SlideObject::Text {
+                id: Uuid::new_v4(),
+                rect: Rect::default(),
+                text: "ORIGINAL".into(),
+                style: TextStyle::default(),
+                align: TextAlign::Center,
+            }],
+        });
+        project.messages.push(MessageTemplate {
+            id: message_id,
+            name: "Message".into(),
+            text: format!("Time {{timer:{timer_id}}}"),
+        });
+        (project, prop_id, message_id, timer_id)
+    }
+
+    #[test]
+    fn snapshots_freeze_prop_and_message_until_retrigger_and_clear() {
+        let (mut project, prop_id, message_id, _) = fixture();
+        let mut runtime = Runtime::default();
+        runtime
+            .apply_actions(
+                &project,
+                &[
+                    CueAction::TriggerProp { id: prop_id },
+                    CueAction::ShowMessage { id: message_id },
+                ],
+            )
+            .unwrap();
+        project.props[0].name = "Edited prop".into();
+        project.props[0].objects.clear();
+        project.messages[0].text = "Edited message".into();
+        assert_eq!(runtime.output.props, vec![prop_id]);
+        assert_eq!(runtime.output.prop_snapshots[0].name, "Original prop");
+        assert_eq!(runtime.output.prop_snapshots[0].objects.len(), 1);
+        assert!(
+            runtime
+                .output
+                .message_snapshot
+                .as_deref()
+                .unwrap()
+                .starts_with("Time {timer:")
+        );
+
+        // Triggering an already shown prop refreshes its snapshot without duplicating its ID.
+        runtime
+            .apply_actions(&project, &[CueAction::TriggerProp { id: prop_id }])
+            .unwrap();
+        assert_eq!(runtime.output.props, vec![prop_id]);
+        assert_eq!(runtime.output.prop_snapshots[0].name, "Edited prop");
+        let macro_id = Uuid::new_v4();
+        project.macros.push(Macro {
+            id: macro_id,
+            name: "Clear outputs".into(),
+            actions: vec![CueAction::ClearProps, CueAction::ClearMessage],
+        });
+        runtime.run_macro(&project, macro_id).unwrap();
+        assert!(runtime.output.props.is_empty());
+        assert!(runtime.output.prop_snapshots.is_empty());
+        assert_eq!(runtime.output.message, None);
+        assert_eq!(runtime.output.message_snapshot, None);
+    }
+
+    #[test]
+    fn message_snapshot_survives_template_edit_while_timer_values_stay_live() {
+        let (mut project, _, message_id, timer_id) = fixture();
+        let mut runtime = Runtime::default();
+        runtime
+            .apply_actions(&project, &[CueAction::ShowMessage { id: message_id }])
+            .unwrap();
+        let timer_id = project.timer_def(timer_id).unwrap().id;
+        let timer_text = runtime.render_output_message(&project, 0).unwrap();
+        assert_eq!(timer_text, "Time 05:00");
+        runtime.timer_states.get_mut(&timer_id).unwrap().value_secs = 61.0;
+        assert_eq!(
+            runtime.render_output_message(&project, 0).unwrap(),
+            "Time 01:01"
+        );
+        project.messages.clear();
+        runtime.timer_states.get_mut(&timer_id).unwrap().running = true;
+        runtime.tick(&project, Duration::from_secs(1));
+        assert_eq!(
+            runtime.render_output_message(&project, 0).unwrap(),
+            "Time 01:00"
+        );
+        runtime
+            .apply_actions(&project, &[CueAction::ClearMessages])
+            .unwrap();
+        assert_eq!(runtime.render_output_message(&project, 0), None);
+    }
+
+    #[test]
+    fn prop_uses_trigger_time_live_theme_even_after_project_theme_edit() {
+        let (mut project, prop_id, _, _) = fixture();
+        let mut runtime = Runtime::default();
+        let theme = project.themes[0].clone();
+        runtime.output.live = Some(LiveSlide {
+            document_id: project.documents[0].id,
+            document_name: project.documents[0].name.clone(),
+            slide: project.documents[0].slides[0].clone(),
+            theme: theme.clone(),
+        });
+        runtime
+            .apply_actions(&project, &[CueAction::TriggerProp { id: prop_id }])
+            .unwrap();
+        project.themes[0].font_size = 177.0;
+        assert_eq!(runtime.output.prop_theme_snapshots, vec![theme]);
+    }
 }

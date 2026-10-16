@@ -4,10 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use egui::{
-    Align, Color32, FontFamily, FontId, Pos2, Rect, Stroke, TextureHandle, Vec2,
-    text::{LayoutJob, TextFormat},
-};
+use egui::{Color32, Pos2, Rect, Stroke, TextureHandle, Vec2};
 use lumen_core::{
     Background, LiveSlide, OutputState, Project, PushDirection, Runtime, SlideObject, TextAlign,
     TextStyle, Transition, VerticalAlign, markup::Span,
@@ -79,102 +76,26 @@ fn paint_text_layer(
     opacity: f32,
     clip_rect: Rect,
 ) {
-    let align = horizontal_align(align);
-    let vertical_align = vertical_anchor(vertical_align);
-    let base = style.color.unwrap_or(default_color);
-    let initial_size = style.font_size.unwrap_or(default_size).max(1.0);
-    let min_size = (8.0 * rect.width() / 1920.0).max(1.0).min(initial_size);
-    let mut size = initial_size;
-    let mut painter = ui.painter().with_clip_rect(clip_rect.intersect(rect));
-    painter.set_opacity(opacity);
-    let galley = loop {
-        let mut job = LayoutJob::default();
-        job.wrap.max_width = rect.width().max(1.0);
-        job.halign = align;
-        for span in spans {
-            let family = if span.bold {
-                "Poppins Bold"
-            } else if span.italic {
-                "Poppins Italic"
-            } else {
-                "Poppins"
-            };
-            let mut format = TextFormat::simple(
-                FontId::new(size, FontFamily::Name(family.into())),
-                color(span.color.unwrap_or(base)),
-            );
-            format.italics = span.italic && span.bold;
-            format.underline = if span.underline {
-                Stroke::new((size / 18.0).max(1.0), color(span.color.unwrap_or(base)))
-            } else {
-                Stroke::NONE
-            };
-            job.append(&span.text, 0.0, format);
-        }
-        let galley = painter.layout_job(job);
-        if galley.size().y <= rect.height() || size <= min_size {
-            break galley;
-        }
-        size = (size * 0.9).max(min_size);
+    let pixels = ui.ctx().pixels_per_point();
+    let request = lumen_text::TextRequest {
+        spans,
+        width_px: (rect.width() * pixels).round().clamp(1.0, 4096.0) as u32,
+        height_px: (rect.height() * pixels).round().clamp(1.0, 4096.0) as u32,
+        font_px: (style.font_size.unwrap_or(default_size) * pixels).clamp(4.0, 600.0),
+        color: style.color.unwrap_or(default_color),
+        outline: style.outline.map(|(width, color)| {
+            (
+                (width * rect.width() / 1920.0 * pixels).clamp(0.0, 20.0),
+                color,
+            )
+        }),
+        shadow: style.shadow,
+        align,
+        valign: vertical_align,
+        line_height: 1.2,
+        shrink_to_fit: true,
     };
-    let origin = galley_origin(rect, galley.size(), align, vertical_align);
-
-    if style.shadow {
-        let offset = (size * 0.035).max(1.0);
-        painter.galley_with_override_text_color(
-            origin + Vec2::splat(offset),
-            galley.clone(),
-            crate::style::BLACK.gamma_multiply(0.8),
-        );
-    }
-    if let Some((width, outline_color)) = style.outline {
-        let radius = (width * rect.width() / 1920.0).clamp(0.5, 8.0);
-        let outline = color(outline_color);
-        for offset in [
-            Vec2::new(-radius, 0.0),
-            Vec2::new(radius, 0.0),
-            Vec2::new(0.0, -radius),
-            Vec2::new(0.0, radius),
-            Vec2::new(-radius, -radius),
-            Vec2::new(radius, -radius),
-            Vec2::new(-radius, radius),
-            Vec2::new(radius, radius),
-        ] {
-            painter.galley_with_override_text_color(origin + offset, galley.clone(), outline);
-        }
-    }
-    painter.galley(origin, galley, color(base));
-}
-
-fn horizontal_align(align: TextAlign) -> Align {
-    match align {
-        TextAlign::Left => Align::Min,
-        TextAlign::Center => Align::Center,
-        TextAlign::Right => Align::Max,
-    }
-}
-
-fn vertical_anchor(align: VerticalAlign) -> Align {
-    match align {
-        VerticalAlign::Top => Align::Min,
-        VerticalAlign::Middle => Align::Center,
-        VerticalAlign::Bottom => Align::Max,
-    }
-}
-
-fn galley_origin(target: Rect, size: Vec2, align: Align, vertical_align: Align) -> Pos2 {
-    Pos2::new(
-        match align {
-            Align::Min => target.left(),
-            Align::Center => target.center().x,
-            Align::Max => target.right(),
-        },
-        match vertical_align {
-            Align::Min => target.top(),
-            Align::Center => target.center().y - size.y * 0.5,
-            Align::Max => target.bottom() - size.y,
-        },
-    )
+    crate::text::paint(ui, rect, &request, opacity, clip_rect);
 }
 
 fn normalized_rect(canvas: Rect, rect: &lumen_core::Rect) -> Rect {
@@ -519,24 +440,16 @@ fn paint_decorations(
     images: &HashMap<PathBuf, TextureHandle>,
 ) {
     let canvas = fitted(rect, Vec2::new(16.0, 9.0));
-    let theme = output
-        .live
-        .as_ref()
-        .map(|live| &live.theme)
-        .or_else(|| project.themes.first());
-    if let Some(theme) = theme {
-        for id in &output.props {
-            if let Some(prop) = project.prop(*id) {
-                for object in &prop.objects {
-                    paint_object(ui, canvas, object, theme, images, 1.0, rect);
-                }
-            }
+    for (prop, theme) in output
+        .prop_snapshots
+        .iter()
+        .zip(&output.prop_theme_snapshots)
+    {
+        for object in &prop.objects {
+            paint_object(ui, canvas, object, theme, images, 1.0, rect);
         }
     }
-    let Some(message) = output
-        .message
-        .and_then(|id| runtime.render_message(project, id, now))
-    else {
+    let Some(message) = runtime.render_output_message(project, now) else {
         return;
     };
     let banner = Rect::from_min_max(
@@ -604,6 +517,24 @@ pub fn preview_frame_with_images(
         egui::StrokeKind::Inside,
     );
     rect
+}
+
+/// Stage text uses the same shaping path as audience text, including Latin spans.
+pub fn stage_text(ui: &mut egui::Ui, text: &str, size: f32, height: f32) {
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), height),
+        egui::Sense::hover(),
+    );
+    paint_text(
+        ui,
+        &lumen_core::markup::parse_markup(text),
+        rect,
+        &TextStyle::default(),
+        size,
+        crate::style::TEXT.to_array(),
+        TextAlign::Left,
+        VerticalAlign::Top,
+    );
 }
 
 #[cfg(test)]
@@ -687,34 +618,5 @@ mod tests {
             normalized_rect(canvas, &rect),
             Rect::from_min_max(Pos2::new(300.0, 140.0), Pos2::new(700.0, 320.0))
         );
-    }
-
-    #[test]
-    fn galley_origin_accounts_for_size_when_centered_or_right_aligned() {
-        let context = egui::Context::default();
-        let target = Rect::from_min_size(Pos2::new(10.0, 20.0), Vec2::new(400.0, 200.0));
-        let mut bounds = Vec::new();
-        let _ = context.run(Default::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                for align in [Align::Min, Align::Center, Align::Max] {
-                    let mut job = LayoutJob {
-                        halign: align,
-                        ..Default::default()
-                    };
-                    job.append(
-                        "alignment regression",
-                        0.0,
-                        TextFormat::simple(FontId::proportional(16.0), crate::style::TEXT),
-                    );
-                    let galley = ui.painter().layout_job(job);
-                    let origin = galley_origin(target, galley.size(), align, Align::Center);
-                    bounds.push(galley.rect.translate(origin.to_vec2()));
-                }
-            });
-        });
-        assert_eq!(bounds.len(), 3);
-        assert!((bounds[0].left() - target.left()).abs() < 0.5);
-        assert!((bounds[1].center().x - target.center().x).abs() < 0.5);
-        assert!((bounds[2].right() - target.right()).abs() < 0.5);
     }
 }

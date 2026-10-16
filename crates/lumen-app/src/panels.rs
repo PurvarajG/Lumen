@@ -51,11 +51,26 @@ pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
                         .live
                         .as_ref()
                         .is_some_and(|n| n.document_id == *id);
-                    let r = ui.add_sized(
-                        [ui.available_width(), style::CONTROL],
-                        egui::Button::new(&doc.name).selected(app.selected_doc == *id),
-                    );
+                    let r = if crate::text::contains_gujarati(&doc.name) {
+                        crate::text::gu_selectable(
+                            ui,
+                            app.selected_doc == *id,
+                            &doc.name,
+                            style::BODY,
+                        )
+                    } else {
+                        ui.add_sized(
+                            [ui.available_width(), style::CONTROL],
+                            egui::Button::new(&doc.name).selected(app.selected_doc == *id),
+                        )
+                    };
                     if on_deck {
+                        ui.painter().rect_stroke(
+                            r.rect.expand(2.0),
+                            3.0,
+                            egui::Stroke::new(4.0_f32, style::SAFFRON.gamma_multiply(0.14)),
+                            egui::StrokeKind::Outside,
+                        );
                         ui.painter().rect_filled(
                             egui::Rect::from_min_size(
                                 r.rect.min,
@@ -69,10 +84,7 @@ pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
                         app.selected_doc = *id;
                         app.selected_slide = doc.slides.first().map(|s| s.id);
                     }
-                    if live {
-                        ui.colored_label(style::LIVE, "LIVE");
-                    }
-                    if app.selected_doc == *id {
+                    if app.selected_doc == *id && (!app.present || app.library_tab) {
                         ui.horizontal(|ui| {
                             if app.library_tab {
                                 if ui.small_button("Add to order").clicked()
@@ -84,17 +96,18 @@ pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
                                     app.confirm_delete = Some(*id);
                                 }
                             } else {
-                                if ui.small_button("Up").clicked() && index > 0 {
+                                if !app.present && ui.small_button("Up").clicked() && index > 0 {
                                     app.project.playlist.swap(index, index - 1);
                                     app.mark();
                                 }
-                                if ui.small_button("Down").clicked()
+                                if !app.present
+                                    && ui.small_button("Down").clicked()
                                     && index + 1 < app.project.playlist.len()
                                 {
                                     app.project.playlist.swap(index, index + 1);
                                     app.mark();
                                 }
-                                if ui.small_button("Remove").clicked() {
+                                if !app.present && ui.small_button("Remove").clicked() {
                                     app.project.playlist.remove(index);
                                     app.mark();
                                 }
@@ -106,10 +119,27 @@ pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
                             ui.text_edit_singleline(&mut d.name);
                         }
                     }
+                    ui.horizontal(|ui| {
+                        if live {
+                            ui.label(
+                                RichText::new("LIVE")
+                                    .color(style::WHITE)
+                                    .background_color(style::LIVE),
+                            );
+                        }
+                    });
                 });
             }
             if shown == 0 {
-                ui.label("No matching documents. Import a presentation or clear search.");
+                if docs.is_empty() {
+                    ui.label(if app.library_tab {
+                        "No documents yet — create or import a presentation."
+                    } else {
+                        "Running order is empty — add a document from Library."
+                    });
+                } else {
+                    ui.label("No matching documents. Clear search to see the full list.");
+                }
             }
         });
     if ui.button("New document").clicked() {
@@ -185,6 +215,20 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
         ui.label("Create a document or import a presentation to begin.");
         return;
     };
+    if app.project.documents[index].slides.is_empty() {
+        ui.heading("Empty document");
+        ui.label("This document has no slides yet — switch to Prepare and add a slide.");
+        if !app.present
+            && ui.button("Add slide").clicked()
+            && let Some(theme) = app.project.themes.first()
+        {
+            let slide = Slide::new(theme.id);
+            app.selected_slide = Some(slide.id);
+            app.project.documents[index].slides.push(slide);
+            app.mark();
+        }
+        return;
+    }
     ui.heading("Preview");
     let preview = app.selected_live();
     let height = (ui.available_width() * 9.0 / 16.0)
@@ -202,7 +246,11 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
         height,
     );
     if let Some(p) = &preview {
-        ui.label(format!("{} / {}", p.document_name, p.slide.label));
+        crate::text::gu_label(
+            ui,
+            &format!("{} / {}", p.document_name, p.slide.label),
+            style::BODY,
+        );
     }
     ui.small("Edits stay in preview until triggered.");
     ui.horizontal_wrapped(|ui| {
@@ -319,6 +367,12 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
                             ui.painter()
                                 .rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Inside);
                             if on_deck {
+                                ui.painter().rect_stroke(
+                                    rect.expand(2.0),
+                                    2.0,
+                                    egui::Stroke::new(4.0_f32, style::SAFFRON.gamma_multiply(0.14)),
+                                    egui::StrokeKind::Outside,
+                                );
                                 ui.painter().rect_filled(
                                     egui::Rect::from_min_size(
                                         rect.min,
@@ -360,22 +414,34 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
     let height = width * 9.0 / 16.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
     app.paint_live(ui, rect);
+    let live_in_document = app
+        .runtime
+        .output
+        .live
+        .as_ref()
+        .is_some_and(|live| live.document_id == app.selected_doc);
     ui.horizontal(|ui| {
-        if ui.button("Previous").clicked() {
+        if ui
+            .add_sized(
+                [ui.available_width() * 0.43, style::PRIMARY],
+                egui::Button::new("Previous"),
+            )
+            .clicked()
+        {
             app.navigate(false);
         }
         if ui
-            .add_sized([130.0, style::PRIMARY], style::primary("Go live"))
-            .clicked()
-            && let Some(l) = app.selected_live()
-        {
-            app.trigger(l.document_id, l.slide.id);
-        }
-        if ui
-            .add_sized([66.0, style::PRIMARY], style::primary("Next"))
+            .add_sized(
+                [ui.available_width(), style::PRIMARY],
+                style::primary(transport_primary_label(live_in_document)),
+            )
             .clicked()
         {
-            app.navigate(true);
+            if live_in_document {
+                app.navigate(true);
+            } else if let Some(l) = app.selected_live() {
+                app.trigger(l.document_id, l.slide.id);
+            }
         }
     });
     ui.horizontal(|ui| {
@@ -394,15 +460,22 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
                 }
             }
         });
-        if ui
-            .button(if app.runtime.output.blackout {
-                "Restore output"
-            } else {
-                "Blackout · B"
-            })
-            .clicked()
-        {
+        let blackout = app.runtime.output.blackout;
+        let blackout_button = egui::Button::new(if blackout {
+            "Blackout active · B"
+        } else {
+            "Blackout · B"
+        })
+        .fill(if blackout { style::LIVE } else { style::RAISED })
+        .stroke(egui::Stroke::new(
+            1.0_f32,
+            if blackout { style::LIVE } else { style::LINE },
+        ));
+        if ui.add(blackout_button).clicked() {
             app.runtime.output.blackout = !app.runtime.output.blackout;
+        }
+        if app.runtime.output.blackout {
+            ui.colored_label(style::LIVE, "Output is blacked out");
         }
     });
     ui.separator();
@@ -475,6 +548,10 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
         });
 }
 
+fn transport_primary_label(live_in_document: bool) -> &'static str {
+    if live_in_document { "Next" } else { "Go live" }
+}
+
 fn grid_layout(available: f32, gap: f32) -> (usize, f32) {
     let columns = ((available + gap) / (180.0 + gap)).floor().max(1.0) as usize;
     (
@@ -486,6 +563,11 @@ fn grid_layout(available: f32, gap: f32) -> (usize, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn transport_keeps_one_contextual_primary_label() {
+        assert_eq!(transport_primary_label(false), "Go live");
+        assert_eq!(transport_primary_label(true), "Next");
+    }
     #[test]
     fn grid_fits_width_without_overflow() {
         for available in [100.0, 280.0, 600.0, 1200.0] {

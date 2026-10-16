@@ -72,13 +72,21 @@ pub fn timers(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime, n
         runtime.sync_timers(project);
         changed = true;
     }
+    if project.timers.is_empty() {
+        ui.label("No timers yet — add a timer to start a countdown.");
+    }
     let mut remove = None;
     for (i, t) in project.timers.iter_mut().enumerate() {
         let used = project.documents.iter().flat_map(|d| &d.slides).flat_map(|s| &s.actions).chain(project.macros.iter().flat_map(|m| &m.actions)).any(|a| matches!(a, CueAction::StartTimer{id} | CueAction::PauseTimer{id} | CueAction::ResetTimer{id} if *id == t.id));
         let original_kind = t.kind.clone();
         ui.push_id(t.id, |ui| {
-            ui.horizontal(|ui| {
-                changed |= ui.text_edit_singleline(&mut t.name).changed();
+            if crate::text::contains_gujarati(&t.name) {
+                crate::text::gu_label(ui, &t.name, crate::style::BODY);
+            }
+            ui.horizontal_wrapped(|ui| {
+                changed |= ui
+                    .add(egui::TextEdit::singleline(&mut t.name).desired_width(104.0))
+                    .changed();
                 let value = runtime.timer_display(t, now);
                 let value_secs = timer_value_for_tone(
                     &t.kind,
@@ -116,9 +124,15 @@ pub fn timers(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime, n
                 if ui.button("Reset").clicked() {
                     let _ = runtime.apply_actions(&snapshot, &[CueAction::ResetTimer { id: t.id }]);
                 }
-                if ui.add_enabled(!used, egui::Button::new("Delete")).clicked() {
-                    remove = Some(i);
-                }
+                ui.menu_button(crate::style::icon('\u{e1fe}', 16.0), |ui| {
+                    if ui
+                        .add_enabled(!used, egui::Button::new("Delete timer"))
+                        .clicked()
+                    {
+                        remove = Some(i);
+                        ui.close();
+                    }
+                });
             });
             if used {
                 ui.small("Used by a slide or macro action; remove those references first.");
@@ -179,7 +193,7 @@ pub fn timers(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime, n
                     minute,
                     second,
                 } => {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         changed |= ui
                             .add(egui::DragValue::new(hour).range(0..=23).prefix("HH "))
                             .changed();
@@ -196,7 +210,7 @@ pub fn timers(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime, n
             changed |= ui.checkbox(&mut t.allow_overrun, "Allow overrun").changed();
             let mut warn = t.warn_at_secs.unwrap_or(0.0);
             let had = t.warn_at_secs.is_some();
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let mut enabled = had;
                 if ui.checkbox(&mut enabled, "Warn at").changed() {
                     t.warn_at_secs = enabled.then_some(warn);
@@ -246,6 +260,9 @@ pub fn messages(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime,
         });
         changed = true;
     }
+    if project.messages.is_empty() {
+        ui.label("No messages yet — add a message to show one on screen.");
+    }
     let mut remove = None;
     for (i, m) in project.messages.iter_mut().enumerate() {
         let used = project
@@ -256,15 +273,24 @@ pub fn messages(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime,
             .chain(project.macros.iter().flat_map(|m| &m.actions))
             .any(|a| matches!(a, CueAction::ShowMessage{id} if *id == m.id));
         ui.push_id(m.id, |ui| {
-            ui.horizontal(|ui| {
+            if crate::text::contains_gujarati(&m.name) {
+                crate::text::gu_label(ui, &m.name, crate::style::BODY);
+            }
+            ui.horizontal_wrapped(|ui| {
                 changed |= ui.text_edit_singleline(&mut m.name).changed();
                 if ui.button("Show").clicked() {
                     let _ =
                         runtime.apply_actions(&snapshot, &[CueAction::ShowMessage { id: m.id }]);
                 }
-                if ui.add_enabled(!used, egui::Button::new("Delete")).clicked() {
-                    remove = Some(i);
-                }
+                ui.menu_button(crate::style::icon('\u{e1fe}', 16.0), |ui| {
+                    if ui
+                        .add_enabled(!used, egui::Button::new("Delete message"))
+                        .clicked()
+                    {
+                        remove = Some(i);
+                        ui.close();
+                    }
+                });
             });
             if used {
                 ui.small("Used by a slide or macro action; remove those references first.");
@@ -278,7 +304,8 @@ pub fn messages(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime,
                 .changed();
             ui.menu_button("Insert timer", |ui| {
                 for t in &project.timers {
-                    if ui.button(&t.name).clicked() {
+                    if crate::text::gu_selectable(ui, false, &t.name, crate::style::BODY).clicked()
+                    {
                         m.text.push_str(&format!("{{timer:{}}}", t.id));
                         changed = true;
                     }
@@ -295,7 +322,7 @@ pub fn messages(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime,
     }
     for id in project.messages.iter().map(|m| m.id) {
         if let Some(rendered) = runtime.render_message(project, id, now) {
-            ui.small(rendered);
+            crate::text::gu_label(ui, &rendered, crate::style::CAPTION);
         }
     }
     changed
@@ -313,6 +340,9 @@ pub fn props(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime) ->
         });
         changed = true;
     }
+    if project.props.is_empty() {
+        ui.label("No props yet — add a prop to show a graphic or text.");
+    }
     let mut remove = None;
     for (i, p) in project.props.iter_mut().enumerate() {
         let used = project
@@ -323,15 +353,24 @@ pub fn props(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime) ->
             .chain(project.macros.iter().flat_map(|m| &m.actions))
             .any(|a| matches!(a, CueAction::TriggerProp{id} if *id == p.id));
         ui.push_id(p.id, |ui| {
-            ui.horizontal(|ui| {
+            if crate::text::contains_gujarati(&p.name) {
+                crate::text::gu_label(ui, &p.name, crate::style::BODY);
+            }
+            ui.horizontal_wrapped(|ui| {
                 changed |= ui.text_edit_singleline(&mut p.name).changed();
                 if ui.button("Trigger").clicked() {
                     let _ =
                         runtime.apply_actions(&snapshot, &[CueAction::TriggerProp { id: p.id }]);
                 }
-                if ui.add_enabled(!used, egui::Button::new("Delete")).clicked() {
-                    remove = Some(i);
-                }
+                ui.menu_button(crate::style::icon('\u{e1fe}', 16.0), |ui| {
+                    if ui
+                        .add_enabled(!used, egui::Button::new("Delete prop"))
+                        .clicked()
+                    {
+                        remove = Some(i);
+                        ui.close();
+                    }
+                });
             });
             if used {
                 ui.small("Used by a slide or macro action; remove those references first.");
