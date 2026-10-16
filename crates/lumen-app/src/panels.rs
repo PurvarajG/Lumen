@@ -430,13 +430,27 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
     let width = ui.available_width();
     let height = width * 9.0 / 16.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
-    app.paint_live(ui, rect);
+    if app.runtime.output.deck.is_some() {
+        ui.put(
+            rect,
+            egui::Label::new(format!(
+                "Playing in {} — use Next/Previous",
+                app.deck.app_name()
+            )),
+        );
+        if ui.button("Stop deck").clicked() {
+            app.apply_actions(&[CueAction::StopDeck]);
+        }
+    } else {
+        app.paint_live(ui, rect);
+    }
     let live_in_document = app
         .runtime
         .output
         .live
         .as_ref()
-        .is_some_and(|live| live.document_id == app.selected_doc);
+        .is_some_and(|live| live.document_id == app.selected_doc)
+        || app.runtime.output.deck.is_some();
     let book_preview = crate::books::has_preview(app);
     ui.horizontal(|ui| {
         if ui

@@ -26,6 +26,8 @@ pub struct LiveSlide {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct OutputState {
+    #[serde(default)]
+    pub deck: Option<std::path::PathBuf>,
     pub live: Option<LiveSlide>,
     pub blackout: bool,
     pub clear_text: bool,
@@ -422,9 +424,15 @@ impl Runtime {
             match action {
                 CueAction::Blackout(value) => self.output.blackout = *value,
                 CueAction::ClearText(value) => self.output.clear_text = *value,
-                CueAction::ClearSlide => self.output.clear_text = true,
+                CueAction::PlayDeck { path } => self.output.deck = Some(path.clone()),
+                CueAction::StopDeck => self.output.deck = None,
+                CueAction::ClearSlide => {
+                    self.output.deck = None;
+                    self.output.clear_text = true;
+                }
                 CueAction::ClearMedia => self.output.media_cleared = true,
                 CueAction::ClearAll => {
+                    self.output.deck = None;
                     self.output.live = None;
                     self.output.clear_text = false;
                     self.output.props.clear();

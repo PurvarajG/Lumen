@@ -207,6 +207,10 @@ pub struct Slide {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum Background {
     Solid([u8; 4]),
+    Pdf {
+        path: PathBuf,
+        page: u32,
+    },
     Image {
         path: PathBuf,
     },
@@ -273,6 +277,8 @@ pub struct Macro {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum CueAction {
+    PlayDeck { path: PathBuf },
+    StopDeck,
     Blackout(bool),
     ClearText(bool),
     ClearAll,
@@ -297,6 +303,10 @@ pub enum CueAction {
 
 #[derive(Debug, Error)]
 pub enum CoreError {
+    #[error("invalid PDF page {0}; page numbers start at 1")]
+    InvalidPdfPage(u32),
+    #[error("{0} path must not be empty")]
+    EmptyPath(String),
     #[error("unsupported project schema version {found}; expected {expected}")]
     UnsupportedSchema { found: u32, expected: u32 },
     #[error("project must contain at least one theme")]
@@ -504,6 +514,14 @@ impl Project {
                         return Err(CoreError::InvalidTransition(millis));
                     }
                     _ => {}
+                }
+                if let Background::Pdf { path, page } = &slide.background {
+                    if *page == 0 {
+                        return Err(CoreError::InvalidPdfPage(*page));
+                    }
+                    if path.as_os_str().is_empty() {
+                        return Err(CoreError::EmptyPath("PDF".into()));
+                    }
                 }
                 // text_rect
                 if !slide.text_rect.is_valid() {
@@ -769,6 +787,12 @@ impl Project {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn validate_actions(actions: &[CueAction], owner: String) -> Result<(), CoreError> {
+    if actions
+        .iter()
+        .any(|a| matches!(a, CueAction::PlayDeck { path } if path.as_os_str().is_empty()))
+    {
+        return Err(CoreError::EmptyPath("deck".into()));
+    }
     if actions.len() > MAX_ACTIONS {
         Err(CoreError::TooManyActions {
             owner,

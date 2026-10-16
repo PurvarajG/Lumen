@@ -169,17 +169,26 @@ fn paint_scene(
     };
     let background = match &live.slide.background {
         Background::Solid(rgba) => color(*rgba),
+        Background::Pdf { .. } => crate::style::BLACK,
         _ => color(live.theme.background_color),
     };
     painter.rect_filled(canvas, 0.0, background);
+    let pdf = if let Background::Pdf { path, page } = &live.slide.background {
+        crate::pdf::texture(ui, path, *page, canvas)
+    } else {
+        None
+    };
     if !scene.media_cleared
-        && let Some(texture) = scene.media
+        && let Some(texture) = pdf.as_ref().or(scene.media)
         && matches!(
             live.slide.background,
-            Background::Image { .. } | Background::Video { .. }
+            Background::Image { .. } | Background::Video { .. } | Background::Pdf { .. }
         )
     {
-        let image_rect = if matches!(live.slide.background, Background::Image { .. }) {
+        let image_rect = if matches!(
+            live.slide.background,
+            Background::Image { .. } | Background::Pdf { .. }
+        ) {
             fitted(canvas, texture.size_vec2())
         } else {
             canvas

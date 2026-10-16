@@ -97,6 +97,9 @@ pub fn slide(ui: &mut egui::Ui, slide: &mut Slide, project: &Project) -> bool {
                 changed = true;
             }
         }
+        Background::Pdf { path, page } => {
+            ui.label(format!("PDF: {} — Page {}", path.display(), page));
+        }
         Background::Image { path } => {
             ui.label("Image path");
             let mut s = path.to_string_lossy().into_owned();
@@ -258,6 +261,8 @@ fn action_editor(ui: &mut egui::Ui, a: &mut CueAction, p: &Project) -> bool {
         "Reset timer",
         "Trigger prop",
         "Show message",
+        "Play deck",
+        "Stop deck",
     ];
     let idx = action_index(a);
     let mut selected = idx;
@@ -296,6 +301,13 @@ fn action_editor(ui: &mut egui::Ui, a: &mut CueAction, p: &Project) -> bool {
             changed |= ui.checkbox(v, "On").changed()
         }
         CueAction::StageMessage(s) => changed |= ui.text_edit_singleline(s).changed(),
+        CueAction::PlayDeck { path } => {
+            let mut text = path.to_string_lossy().into_owned();
+            if ui.text_edit_singleline(&mut text).changed() {
+                *path = text.into();
+                changed = true;
+            }
+        }
         CueAction::StartTimer { id }
         | CueAction::PauseTimer { id }
         | CueAction::ResetTimer { id }
@@ -346,6 +358,8 @@ fn action_index(a: &CueAction) -> usize {
         CueAction::ResetTimer { .. } => 12,
         CueAction::TriggerProp { .. } => 13,
         CueAction::ShowMessage { .. } => 14,
+        CueAction::PlayDeck { .. } => 15,
+        CueAction::StopDeck => 16,
     }
 }
 fn default_action(i: usize, p: &Project) -> CueAction {
@@ -372,9 +386,13 @@ fn default_action(i: usize, p: &Project) -> CueAction {
         13 => CueAction::TriggerProp {
             id: p.props.first().map_or_else(Uuid::new_v4, |x| x.id),
         },
-        _ => CueAction::ShowMessage {
+        14 => CueAction::ShowMessage {
             id: p.messages.first().map_or_else(Uuid::new_v4, |x| x.id),
         },
+        15 => CueAction::PlayDeck {
+            path: Default::default(),
+        },
+        _ => CueAction::StopDeck,
     }
 }
 
