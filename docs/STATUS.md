@@ -45,6 +45,10 @@ Prepared `docs/design/lumen-brand-v1/` and sibling ZIP for Claude to integrate t
 
 Package asset validation is documented in `VERIFICATION.md`. Integrated in wave F1 below.
 
+## Release candidate 1.0.0-rc.3 (2026-10-16)
+
+Wave F1 below. `.local/dist/Lumen-Presenter-1.0.0-rc.3-macos-arm64.dmg` (ad-hoc signed, not notarized): `hdiutil verify` and `codesign --verify --deep --strict` pass, Info.plist reports 1.0.0-rc.3, bundled AppIcon.icns matches the generated icon, no ChitraUni, bundled binary passes `--smoke-test`.
+
 ## Wave F1: brand lockup and app icon (2026-10-16)
 
 Integrated the approved saffron L / projected-light identity as a small branding change; the console layout is unchanged.
@@ -54,4 +58,4 @@ Integrated the approved saffron L / projected-light identity as a small branding
 
 Verified: fmt, clippy -D warnings, 237 workspace tests. Window-only before/after captures (`.local/qa/f1/shots`) in Present and Prepare at 1500, 1280 and 1024 pt on the Retina laptop (2x), and 1500 pt on the L27q (1x): the mark is crisp with its diagonal gap at both scales, and control order and row 2 match the before shots. The header row is about 3 pt taller because the mark is 28 pt.
 
-Not verified by hand: typing a new show name and saving (synthetic keystrokes and value setting do not reach egui text fields here; the field keeps the same binding and dirty tracking as before), the brand tooltip, and the Dock/Finder rendering of the installed app (Quick Look thumbnailing hung). Packaging overwrote the local rc.2 DMG with this build; the GitHub rc.2 asset is the earlier build.
+Not verified by hand: typing a new show name and saving (synthetic keystrokes and value setting do not reach egui text fields here; the field keeps the same binding and dirty tracking as before), the brand tooltip, and the Dock/Finder rendering of the installed app (Quick Look thumbnailing hung).

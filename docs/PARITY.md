@@ -33,6 +33,6 @@ States: **Verified** = exercised through automated tests or native UI checks; **
 | Cloud/team synchronization | Planned | Conflict/persistence/offline/recovery design and tests |
 | PDF slides | Verified | CoreGraphics vector rendering at output pixel size (tests for crop/rotation/aspect); native preview/live/thumbnail capture of a 2-page PDF |
 | PowerPoint / Keynote playback | Verified with PowerPoint 16.114; Keynote untested | Launch Services open + osascript control with argv-only paths; native run: Play cue started the slideshow, Lumen Next/Previous moved slides 1→2→1, F2 stopped it |
-| Packaged signed releases / other OSs | Verified macOS release DMG | `scripts/package-macos.sh` builds optimized 1.0.0-rc.2 release bundle, original AppIcon.icns, licenses, and compressed UDZO DMG verified with hdiutil and codesign; notarization and Windows/Linux unverified |
+| Packaged signed releases / other OSs | Verified macOS release DMG | `scripts/package-macos.sh` builds optimized 1.0.0-rc.3 release bundle, original AppIcon.icns, licenses, and compressed UDZO DMG verified with hdiutil and codesign; notarization and Windows/Linux unverified |
 
 Research findings and their limitations are in `docs/research`. Detailed staged architecture is in `docs/superpowers/specs/2026-10-16-lumen-design.md`.

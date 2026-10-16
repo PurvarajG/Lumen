@@ -9,7 +9,7 @@ Full ProPresenter parity is a long-term goal; see [the parity tracker](docs/PARI
 ## Installation & First Run
 
 ### Installing from DMG
-1. Mount the release image: `Lumen-Presenter-1.0.0-rc.2-macos-arm64.dmg` (located in `.local/dist/` or project releases).
+1. Mount the release image: `Lumen-Presenter-1.0.0-rc.3-macos-arm64.dmg` (located in `.local/dist/` or project releases).
 2. Drag **Lumen Presenter.app** into `/Applications`.
 3. **macOS Gatekeeper note:** The release build is ad-hoc signed for local operation (commercial Apple Developer ID notarization is pending). On first run, right-click (or Control-click) **Lumen Presenter.app** in Finder and choose **Open**, or run:
    ```sh
