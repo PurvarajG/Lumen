@@ -38,3 +38,9 @@ From user feedback on a real two-screen run (laptop + 27" external): PowerPoint 
 Verified: fmt, clippy -D warnings, 235 workspace tests. Native on the external display via the HTTP API: video → caption over playing video → deck page full-screen → lower third + logo → caption over the deck; operator console shows the Overlays chips. The PowerPoint export script was run against a real deck (closed and already-open cases).
 
 Not verified: drag-and-drop/Add files of a deck through the UI and the context-menu Play path (no synthetic clicks); Keynote; logo picking opens the file dialog on the UI thread, so outputs pause while it is open (set logos up before the service).
+
+## Branding handoff (2026-10-16)
+
+Prepared `docs/design/lumen-brand-v1/` and sibling ZIP for Claude to integrate the selected saffron L/projected-light identity. Includes editable vector redraws, outlined Poppins lockups, transparent PNGs, macOS ICNS/iconset, offline proof sheet, concept references, scoped implementation instructions, colour/sizing tokens and a ready-to-paste Claude prompt. The current console layout and full feature set are authoritative; generated mockups are illustrative. Remove the prominent Present-mode show heading while preserving editable/persisted project names in Prepare mode.
+
+Package asset validation is documented in `VERIFICATION.md`. Application source and runtime assets remain unchanged; branding integration and native regression checks are pending Claude implementation.

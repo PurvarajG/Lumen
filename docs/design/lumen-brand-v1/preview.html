@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumen Presenter — brand handoff</title>
+<style>
+@font-face{font-family:Poppins;src:url('assets/fonts/Poppins-Regular.ttf')}
+@font-face{font-family:Poppins;src:url('assets/fonts/Poppins-SemiBold.ttf');font-weight:600}
+*{box-sizing:border-box}body{margin:0;background:#121316;color:#ece8e1;font:14px Poppins,system-ui,sans-serif;line-height:1.6}main{max-width:1100px;margin:48px auto;padding:0 24px}h1{font-size:30px;letter-spacing:-1px}h2{font-size:18px;margin-top:36px}p{color:#a39e96;max-width:850px}a{color:#f2a33a}section{padding:24px;background:#1a1c20;border:1px solid #2e3238;margin:16px 0}.row{display:flex;align-items:center;gap:24px;flex-wrap:wrap}.proof{display:inline-flex;align-items:center;gap:8px;min-height:28px}.proof img{display:block}.chip{border:1px solid #2e3238;padding:4px 10px;color:#ece8e1;background:#23262b;font-size:13px}.label{display:block;font-size:11px;color:#a39e96;margin-bottom:10px}.light{background:#ece8e1;color:#121316}.light .label{color:#555}figure{margin:0;text-align:center}figcaption{color:#a39e96;font-size:11px;margin-top:8px}.ref{width:100%;display:block}.swatch{height:44px;width:88px;display:block;border:1px solid #77726b}.asset{width:120px;height:120px}code{font-size:12px}small{color:#a39e96}
+</style>
+<main>
+<h1>Lumen Presenter / design handoff</h1>
+<p>The current app layout stays authoritative. Change the brand/title slot and icon; preserve all controls. This page proves the supplied vector and raster assets. It is not an application screenshot.</p>
+<p><a href="CLAUDE-PROMPT.md">Claude prompt</a> · <a href="IMPLEMENTATION.md">Integration specification</a> · <a href="tokens.json">Tokens</a></p>
+<h2>Actual-size header asset · 188 × 28 logical points</h2>
+<section><span class="label">Local header fragment — controls remain in their existing sequence</span><div class="row" style="gap:12px"><img src="assets/lumen-header-on-dark.svg" width="188" height="28" alt="Lumen Presenter"><span style="color:#2e3238">│</span><span class="chip">Prepare</span><span class="chip">Present</span><span style="color:#2e3238">│</span><span class="chip">Audience off</span><span class="chip">Stage off</span><span class="chip">Remote off</span></div></section>
+<h2>Responsive reductions</h2>
+<section class="row"><figure><img src="assets/lumen-header-on-dark.svg" width="188" height="28" alt="Full lockup"><figcaption>Full: 188 × 28</figcaption></figure><figure><span class="proof"><img src="assets/lumen-mark-saffron-64.png" width="28" height="28" alt=""><span style="font-size:18px;font-weight:600">Lumen</span></span><figcaption>Compact: mark + native name</figcaption></figure><figure><img src="assets/lumen-mark-saffron-64.png" width="28" height="28" alt="Lumen Presenter"><figcaption>Minimum: mark only</figcaption></figure></section>
+<h2>Small-size silhouette proof</h2>
+<section class="row">
+<figure><img src="assets/lumen-mark-saffron-16.png" width="16" height="16" alt="16 pixel mark"><figcaption>16 px</figcaption></figure>
+<figure><img src="assets/lumen-mark-saffron-24.png" width="24" height="24" alt="24 pixel mark"><figcaption>24 px</figcaption></figure>
+<figure><img src="assets/lumen-mark-saffron-28.png" width="28" height="28" alt="28 pixel mark"><figcaption>28 px</figcaption></figure>
+<figure><img src="assets/lumen-mark-saffron-32.png" width="32" height="32" alt="32 pixel mark"><figcaption>32 px</figcaption></figure>
+<figure><img src="assets/lumen-mark-saffron-128.png" width="128" height="128" alt="Enlarged mark"><figcaption>128 px</figcaption></figure>
+</section>
+<h2>Dark and light applications</h2>
+<section class="row"><img src="assets/lumen-header-on-dark.svg" width="376" height="56" alt="Dark background lockup enlarged"><img src="assets/lumen-mark-light.svg" class="asset" alt="Monochrome light mark"></section>
+<section class="row light"><img src="assets/lumen-header-on-light.svg" width="376" height="56" alt="Light background lockup enlarged"><img src="assets/lumen-mark-dark.svg" class="asset" alt="Monochrome dark mark"></section>
+<h2>macOS icon</h2>
+<section class="row"><img src="assets/lumen-app-icon-1024.png" width="256" height="256" alt="Lumen app icon"><img src="assets/Lumen.iconset/icon_32x32@2x.png" width="64" height="64" alt="64 pixel app icon"><img src="assets/Lumen.iconset/icon_16x16@2x.png" width="32" height="32" alt="32 pixel app icon"><a href="assets/Lumen-AppIcon.icns">Download ICNS</a></section>
+<h2>Existing palette</h2>
+<section class="row"><figure><span class="swatch" style="background:#f2a33a"></span><figcaption>Saffron #F2A33A</figcaption></figure><figure><span class="swatch" style="background:#121316"></span><figcaption>Canvas #121316</figcaption></figure><figure><span class="swatch" style="background:#1a1c20"></span><figcaption>Panel #1A1C20</figcaption></figure><figure><span class="swatch" style="background:#ece8e1"></span><figcaption>Text #ECE8E1</figcaption></figure></section>
+<h2>Revised generated direction</h2>
+<p>Use only for the brand idea. The larger logo, moved mode switch, changed panel proportions and control styling are not implementation instructions.</p>
+<img class="ref" src="references/in-app-direction.png" alt="Generated placement direction, not the actual app">
+<h2>Historical native console reference</h2>
+<p>From the repository's release captures. Inspect the current native app and retain any newer features.</p>
+<img class="ref" src="references/existing-console.png" alt="Previously captured actual Lumen console">
+<h2>Original identity concept</h2>
+<img class="ref" src="references/logo-concept.png" alt="Original generated logo concept">
+<p><small>Production SVGs are a normalized two-path redraw; lettering is outlined from bundled OFL Poppins. No application code was changed.</small></p>
+</main>
+</html>
