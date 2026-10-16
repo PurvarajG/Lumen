@@ -41,6 +41,14 @@ fn doc(name: &str, theme: Uuid, labels: &[&str]) -> Document {
 }
 
 #[test]
+fn old_documents_without_deck_source_deserialize() {
+    let mut encoded = serde_json::to_value(Document::new("Legacy")).unwrap();
+    encoded.as_object_mut().unwrap().remove("source");
+    let decoded: Document = serde_json::from_value(encoded).unwrap();
+    assert_eq!(decoded.source, None);
+}
+
+#[test]
 fn live_trigger_is_a_detached_snapshot_and_actions_apply_in_order() {
     let mut p = Project::demo();
     let d_id = p.documents[0].id;

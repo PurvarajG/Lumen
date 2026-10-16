@@ -115,6 +115,7 @@ pub struct LumenApp {
     active_import: Option<u64>,
     adding: Vec<u64>,
     pub(super) add_progress: Option<(usize, usize)>,
+    pub(super) add_detail: Option<String>,
     pub(super) add_notice: Option<String>,
     active_recovery: u64,
     project_epoch: u64,
@@ -222,6 +223,7 @@ impl LumenApp {
             active_import: None,
             adding: Vec::new(),
             add_progress: None,
+            add_detail: None,
             add_notice: None,
             active_recovery: 0,
             project_epoch: 0,
@@ -748,16 +750,26 @@ impl LumenApp {
                 }
                 FileResult::AddProgress(id, done, total) if self.adding.contains(&id) => {
                     self.add_progress = Some((done, total));
+                    self.add_detail = None;
+                }
+                FileResult::DeckProgress(id, message) if self.adding.contains(&id) => {
+                    self.add_detail = Some(message);
+                }
+                FileResult::DeckProgress(id, message) if self.active_import == Some(id) => {
+                    self.status = message;
                 }
                 FileResult::Added(id, batch) if self.adding.contains(&id) => {
                     self.adding.retain(|a| *a != id);
                     self.add_progress = None;
+                    self.add_detail = None;
                     match batch {
                         Some(batch) => self.finish_add(batch),
                         None => self.status = "Add files cancelled".into(),
                     }
                 }
-                FileResult::AddProgress(..) | FileResult::Added(..) => {}
+                FileResult::AddProgress(..)
+                | FileResult::DeckProgress(..)
+                | FileResult::Added(..) => {}
                 FileResult::PickMedia(None, _) => {
                     self.media_target = None;
                     self.modal = false;
@@ -1054,7 +1066,14 @@ impl eframe::App for LumenApp {
                     ui.separator();
                     ui.label(&self.status);
                     if !self.error.is_empty() {
-                        ui.colored_label(crate::style::WARN, &self.error);
+                        ui.horizontal(|ui| {
+                            ui.colored_label(crate::style::WARN, &self.error);
+                            if self.error.contains("Keynote isn't installed")
+                                && ui.small_button("Get Keynote").clicked()
+                            {
+                                crate::deck::open_keynote_store();
+                            }
+                        });
                     }
                     if !self.media.status.is_empty() {
                         ui.label(&self.media.status);
@@ -1133,6 +1152,7 @@ impl LumenApp {
     fn reset_adds(&mut self) {
         self.adding.clear();
         self.add_progress = None;
+        self.add_detail = None;
         self.add_notice = None;
     }
     /// `None` opens the multi-select picker; otherwise the dropped paths are added.
@@ -1191,8 +1211,12 @@ impl LumenApp {
     }
     fn finish_add(&mut self, batch: crate::add::AddBatch) {
         let notice = crate::add::batch_notice(batch.documents.len(), &batch.skipped);
+        let mut notice = notice;
         if let Some(warning) = batch.warnings.first() {
             self.error = warning.clone();
+            if batch.documents.is_empty() {
+                notice = warning.clone();
+            }
         }
         if let Some(first) = batch.documents.first() {
             let (doc, slide) = (first.id, first.slides.first().map(|s| s.id));

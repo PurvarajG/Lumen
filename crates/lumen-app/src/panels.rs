@@ -95,19 +95,24 @@ fn add_header(app: &mut LumenApp, ui: &mut egui::Ui, has_items: bool) {
     {
         app.start_add(None);
     }
-    if let Some((done, total)) = app.add_progress {
+    if let Some(detail) = &app.add_detail {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(detail);
+        });
+    } else if let Some((done, total)) = app.add_progress {
         ui.horizontal(|ui| {
             ui.spinner();
             ui.label(format!("Adding {done} of {total}…"));
         });
     } else if let Some(notice) = app.add_notice.clone() {
         ui.horizontal_wrapped(|ui| {
-            let color = if notice.contains("skipped") {
+            let color = if notice.contains("skipped") || notice.contains("isn't installed") {
                 style::WARN
             } else {
                 style::TEXT_DIM
             };
-            ui.colored_label(color, notice);
+            ui.colored_label(color, &notice);
             if ui.small_button("Dismiss").clicked() {
                 app.add_notice = None;
             }
@@ -319,7 +324,8 @@ fn document_rows(app: &mut LumenApp, ui: &mut egui::Ui, docs: &[Uuid], reorder: 
                             crate::books::remember_cue(app, *id, slide);
                         }
                     }
-                    r.on_hover_text(label);
+                    r.clone().on_hover_text(label);
+                    deck_play_menu(app, r, *id);
                     if app.selected_doc == *id && (!app.present || app.library_tab == 1) {
                         ui.horizontal(|ui| {
                             if app.library_tab == 1 {
@@ -434,6 +440,17 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
             ),
             style::BODY,
         );
+    }
+    if app.present
+        && let Some(notes) = app
+            .runtime
+            .output
+            .live
+            .as_ref()
+            .map(|live| live.slide.notes.as_str())
+            .filter(|notes| !notes.trim().is_empty())
+    {
+        crate::text::gu_label(ui, notes, style::CAPTION);
     }
     ui.small("Edits stay in preview until triggered.");
     ui.horizontal_wrapped(|ui| {
@@ -586,6 +603,7 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
                             if r.double_clicked() {
                                 app.trigger(app.selected_doc, slide.id);
                             }
+                            deck_play_menu(app, r.clone(), app.selected_doc);
                             ui.horizontal(|ui| {
                                 ui.add(egui::Label::new(&slide.label).truncate());
                                 if live {
@@ -625,6 +643,35 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
                 }
             }
         });
+}
+
+fn deck_play_menu(app: &mut LumenApp, response: egui::Response, document_id: Uuid) {
+    let Some(source) = app
+        .project
+        .document(document_id)
+        .and_then(|document| document.source.clone())
+    else {
+        return;
+    };
+    let app_name = match source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "key" => "Keynote",
+        _ => "PowerPoint",
+    };
+    response.context_menu(|ui| {
+        if ui.button(format!("Play in {app_name} instead")).clicked() {
+            app.apply_actions(&[CueAction::PlayDeck {
+                path: source.clone(),
+            }]);
+            ui.close();
+        }
+        ui.label("Keeps animations; overlays hidden");
+    });
 }
 
 pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {

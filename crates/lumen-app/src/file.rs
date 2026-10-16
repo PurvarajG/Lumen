@@ -19,6 +19,7 @@ pub enum FileResult {
     Autosave(u64, u64, PathBuf, Result<(), String>),
     PickMedia(Option<PathBuf>, bool),
     AddProgress(u64, usize, usize),
+    DeckProgress(u64, String),
     Added(u64, Option<crate::add::AddBatch>),
 }
 pub enum FileAction {
@@ -69,7 +70,12 @@ pub fn launch(action: FileAction, tx: Sender<FileResult>, repaint_ctx: Context) 
                         ],
                     )
                     .pick_file()
-                    .map(|path| import_presentation(&path, theme));
+                    .map(|path| {
+                        import_presentation_with_progress(&path, theme, |message| {
+                            let _ = tx.send(FileResult::DeckProgress(id, message.to_owned()));
+                            repaint_ctx.request_repaint();
+                        })
+                    });
                 let _ = tx.send(FileResult::Import(id, result));
             }
             FileAction::Export(document) => {
@@ -113,10 +119,18 @@ pub fn launch(action: FileAction, tx: Sender<FileResult>, repaint_ctx: Context) 
                 });
                 let batch = picked.map(|paths| {
                     let plan = crate::add::plan_additions(&crate::add::expand_paths(&paths));
-                    crate::add::build_batch(&plan, theme, |done, total| {
-                        let _ = tx.send(FileResult::AddProgress(id, done, total));
-                        repaint_ctx.request_repaint();
-                    })
+                    crate::add::build_batch(
+                        &plan,
+                        theme,
+                        |done, total| {
+                            let _ = tx.send(FileResult::AddProgress(id, done, total));
+                            repaint_ctx.request_repaint();
+                        },
+                        |message| {
+                            let _ = tx.send(FileResult::DeckProgress(id, message.to_owned()));
+                            repaint_ctx.request_repaint();
+                        },
+                    )
                 });
                 let _ = tx.send(FileResult::Added(id, batch));
             }
@@ -129,11 +143,12 @@ pub fn channel() -> (Sender<FileResult>, Receiver<FileResult>) {
     mpsc::channel()
 }
 
-pub(crate) fn import_presentation(
+pub(crate) fn import_presentation_with_progress(
     path: &std::path::Path,
     theme: uuid::Uuid,
+    mut progress: impl FnMut(&str),
 ) -> Result<lumen_interchange::ImportReport, String> {
-    use lumen_core::{Background, CueAction, Document, Slide};
+    use lumen_core::{Background, Document, Slide};
     let extension = path
         .extension()
         .and_then(|e| e.to_str())
@@ -154,47 +169,28 @@ pub(crate) fn import_presentation(
             document.slides.push(slide);
         }
     } else {
-        if !path.exists() {
-            return Err(format!("Couldn't open {}", path.display()));
+        let (pdf, notes) = crate::deck::convert_to_pdf(path, &mut progress)?;
+        let pages = lumen_media::pdf_page_count(&pdf).map_err(|e| e.to_string())? as usize;
+        if notes.len() != pages {
+            return Err(format!(
+                "Deck notes count {} does not match PDF page count {pages}",
+                notes.len()
+            ));
         }
-        let mut slide = Slide::new(theme);
-        slide.label = format!(
-            "Play {}",
-            path.file_name().unwrap_or_default().to_string_lossy()
-        );
-        slide.actions = vec![CueAction::PlayDeck {
-            path: path.to_owned(),
-        }];
-        slide.notes = "Plays in PowerPoint/Keynote; export as PDF for still pages".into();
-        document.slides.push(slide);
+        document.source = Some(path.to_owned());
+        for (index, note) in notes.into_iter().enumerate() {
+            let mut slide = Slide::new(theme);
+            slide.label = format!("Slide {}", index + 1);
+            slide.background = Background::Pdf {
+                path: pdf.clone(),
+                page: index as u32 + 1,
+            };
+            slide.notes = note;
+            document.slides.push(slide);
+        }
     }
     Ok(lumen_interchange::ImportReport {
         document,
         warnings: Vec::new(),
     })
-}
-
-#[cfg(test)]
-mod deck_tests {
-    use super::*;
-    #[test]
-    fn deck_import_is_a_single_external_playback_cue() {
-        let path = std::env::temp_dir().join(format!("lumen-deck-{}.pptx", uuid::Uuid::new_v4()));
-        std::fs::write(&path, b"not parsed by Lumen").unwrap();
-        let theme = uuid::Uuid::new_v4();
-        let report = import_presentation(&path, theme).unwrap();
-        assert_eq!(report.document.slides.len(), 1);
-        let slide = &report.document.slides[0];
-        assert!(slide.text.is_empty());
-        assert_eq!(slide.theme_id, theme);
-        assert_eq!(
-            slide.actions,
-            vec![lumen_core::CueAction::PlayDeck { path: path.clone() }]
-        );
-        assert_eq!(
-            slide.notes,
-            "Plays in PowerPoint/Keynote; export as PDF for still pages"
-        );
-        std::fs::remove_file(path).unwrap();
-    }
 }
