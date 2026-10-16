@@ -1279,10 +1279,18 @@ impl LumenApp {
             .frame(crate::style::panel_frame())
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
+                    let first_row_width = ui.available_width();
                     if self.present {
-                        crate::text::gu_label(ui, &self.project.name, 20.0);
+                        crate::brand::lockup(ui, true, first_row_width, &self.project.name);
                     } else {
-                        ui.text_edit_singleline(&mut self.project.name);
+                        crate::brand::lockup(ui, false, first_row_width, &self.project.name);
+                        // Keeps "Lumen" from reading as the label of the show-name field.
+                        ui.separator();
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.project.name)
+                                .desired_width(160.0)
+                                .hint_text("Show name"),
+                        );
                     }
                     ui.separator();
                     ui.selectable_value(&mut self.present, false, "Prepare");

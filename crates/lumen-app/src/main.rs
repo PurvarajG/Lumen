@@ -2,6 +2,7 @@ mod add;
 mod app;
 mod audio;
 mod books;
+mod brand;
 mod deck;
 mod displays;
 mod file;
