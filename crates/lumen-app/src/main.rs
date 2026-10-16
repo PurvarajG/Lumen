@@ -1,12 +1,20 @@
 mod app;
+mod audio;
 mod file;
+mod inspector;
 #[cfg(target_os = "macos")]
 mod macos_quit;
 mod media;
 mod panels;
 mod quit;
+mod recovery;
+mod remote;
 mod render;
+mod settings;
+mod shortcuts;
 mod style;
+mod thumbnails;
+mod tools;
 
 #[cfg(target_os = "macos")]
 use std::env;
@@ -34,7 +42,7 @@ fn parse() -> Result<Mode, String> {
                 };
                 project = Some(PathBuf::from(path));
             }
-            Some("--smoke-test") => smoke = true,
+            Some("--smoke") | Some("--smoke-test") => smoke = true,
             Some("--export-demo") => {
                 let Some(path) = args.next() else {
                     return Err("--export-demo requires PATH".into());

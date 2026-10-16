@@ -19,7 +19,7 @@ mkdir -p "$MACOS" "$RESOURCES"
 rm -f "$MACOS/lumen-bin"
 cp "$BIN" "$MACOS/lumen"
 chmod +x "$MACOS/lumen"
-cp "$PROJECT_ROOT/crates/lumen-app/assets/fonts/LICENSE.txt" "$RESOURCES/Geist-LICENSE.txt"
+cp "$PROJECT_ROOT/crates/lumen-app/assets/fonts/OFL.txt" "$RESOURCES/Poppins-OFL.txt"
 cat > "$CONTENTS/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

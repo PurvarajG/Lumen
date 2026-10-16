@@ -123,6 +123,8 @@ pub struct TimerDef {
     pub name: String,
     pub kind: TimerKind,
     pub allow_overrun: bool,
+    #[serde(default)]
+    pub warn_at_secs: Option<f64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -218,7 +220,24 @@ pub enum Background {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum Transition {
     Cut,
-    Fade { millis: u32 },
+    Fade {
+        millis: u32,
+    },
+    FadeThroughBlack {
+        millis: u32,
+    },
+    Push {
+        millis: u32,
+        direction: PushDirection,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PushDirection {
+    Left,
+    Right,
+    Up,
+    Down,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -257,6 +276,10 @@ pub enum CueAction {
     Blackout(bool),
     ClearText(bool),
     ClearAll,
+    ClearSlide,
+    ClearMedia,
+    ClearAudio,
+    ClearMessages,
     StageMessage(String),
     StartTimer { id: Uuid },
     PauseTimer { id: Uuid },
@@ -334,6 +357,8 @@ pub enum CoreError {
         actual: usize,
         maximum: usize,
     },
+    #[error("transition duration {0}ms exceeds 10000ms")]
+    InvalidTransition(u32),
     #[error("prop {0} does not exist")]
     MissingProp(Uuid),
     #[error("message {0} does not exist")]
@@ -470,6 +495,16 @@ impl Project {
                 validate_actions(&slide.actions, format!("slide {}", slide.id))?;
                 self.validate_action_refs(&slide.actions)?;
 
+                match slide.transition {
+                    Transition::Fade { millis }
+                    | Transition::FadeThroughBlack { millis }
+                    | Transition::Push { millis, .. }
+                        if millis > 10000 =>
+                    {
+                        return Err(CoreError::InvalidTransition(millis));
+                    }
+                    _ => {}
+                }
                 // text_rect
                 if !slide.text_rect.is_valid() {
                     return Err(CoreError::InvalidRect {
@@ -524,6 +559,15 @@ impl Project {
         // Timers
         for timer in &self.timers {
             validate_timer_kind(&timer.kind, timer.id)?;
+            if timer
+                .warn_at_secs
+                .is_some_and(|value| !value.is_finite() || !(0.0..=360000.0).contains(&value))
+            {
+                return Err(CoreError::InvalidTimerKind {
+                    id: timer.id,
+                    reason: "warning threshold must be finite and within 0..=360000".into(),
+                });
+            }
         }
 
         // Props
@@ -688,6 +732,7 @@ impl Project {
                 duration_secs: 300.0,
             },
             allow_overrun: false,
+            warn_at_secs: None,
         };
         Self {
             schema_version: SCHEMA_VERSION,

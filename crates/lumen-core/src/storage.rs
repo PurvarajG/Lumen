@@ -85,6 +85,7 @@ fn migrate(project: &mut Project) -> Result<(), CoreError> {
                         duration_secs: 300.0,
                     },
                     allow_overrun: false,
+                    warn_at_secs: None,
                 });
             }
             Ok(())

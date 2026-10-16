@@ -36,6 +36,10 @@ pub struct OutputState {
     pub message: Option<Uuid>,
     #[serde(default)]
     pub stop_audio_serial: u64,
+    #[serde(default)]
+    pub audio_clear_serial: u64,
+    #[serde(default)]
+    pub media_cleared: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +230,7 @@ impl Runtime {
             theme: theme.clone(),
         });
         candidate.output.clear_text = false;
+        candidate.output.media_cleared = false;
         candidate.apply_actions_unchecked(project, &slide.actions);
         *self = candidate;
         Ok(())
@@ -352,11 +357,16 @@ impl Runtime {
             match action {
                 CueAction::Blackout(value) => self.output.blackout = *value,
                 CueAction::ClearText(value) => self.output.clear_text = *value,
+                CueAction::ClearSlide => self.output.clear_text = true,
+                CueAction::ClearMedia => self.output.media_cleared = true,
                 CueAction::ClearAll => {
                     self.output.live = None;
                     self.output.clear_text = false;
                     self.output.props.clear();
                     self.output.message = None;
+                    self.output.media_cleared = true;
+                    self.output.audio_clear_serial = self.output.audio_clear_serial.wrapping_add(1);
+                    self.output.stop_audio_serial = self.output.stop_audio_serial.wrapping_add(1);
                 }
                 CueAction::StageMessage(message) => self.output.stage_message = message.clone(),
                 CueAction::StartTimer { id } => {
@@ -412,11 +422,12 @@ impl Runtime {
                 CueAction::ShowMessage { id } => {
                     self.output.message = Some(*id);
                 }
-                CueAction::ClearMessage => {
+                CueAction::ClearMessage | CueAction::ClearMessages => {
                     self.output.message = None;
                 }
-                CueAction::StopAudio => {
-                    self.output.stop_audio_serial += 1;
+                CueAction::StopAudio | CueAction::ClearAudio => {
+                    self.output.stop_audio_serial = self.output.stop_audio_serial.wrapping_add(1);
+                    self.output.audio_clear_serial = self.output.audio_clear_serial.wrapping_add(1);
                 }
             }
         }
