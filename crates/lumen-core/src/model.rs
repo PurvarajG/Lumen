@@ -221,6 +221,12 @@ pub enum Background {
     },
 }
 
+impl Background {
+    pub fn is_transparent(&self) -> bool {
+        matches!(self, Self::Solid(color) if color[3] == 0)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum Transition {
     Cut,
@@ -253,6 +259,15 @@ pub struct Theme {
     pub background_color: [u8; 4],
     pub align: TextAlign,
     pub vertical_align: VerticalAlign,
+    #[serde(default)]
+    pub backdrop: Backdrop,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum Backdrop {
+    #[default]
+    None,
+    BottomGradient,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -291,6 +306,7 @@ pub enum CueAction {
     PauseTimer { id: Uuid },
     ResetTimer { id: Uuid },
     TriggerProp { id: Uuid },
+    HideProp { id: Uuid },
     ClearProps,
     ShowMessage { id: Uuid },
     ClearMessage,
@@ -389,6 +405,7 @@ impl Default for Theme {
             background_color: [18, 22, 30, 255],
             align: TextAlign::Center,
             vertical_align: VerticalAlign::Middle,
+            backdrop: Backdrop::None,
         }
     }
 }
@@ -616,7 +633,7 @@ impl Project {
                         return Err(CoreError::MissingTimer(*id));
                     }
                 }
-                CueAction::TriggerProp { id } => {
+                CueAction::TriggerProp { id } | CueAction::HideProp { id } => {
                     if self.prop(*id).is_none() {
                         return Err(CoreError::MissingProp(*id));
                     }

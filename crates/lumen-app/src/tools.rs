@@ -1,5 +1,8 @@
 use egui::{self, RichText};
-use lumen_core::{CueAction, MessageTemplate, Project, Prop, Runtime, TimerDef, TimerKind};
+use lumen_core::{
+    CueAction, MessageTemplate, Project, Prop, Rect, Runtime, SlideObject, TextAlign, TextStyle,
+    TimerDef, TimerKind,
+};
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -330,18 +333,13 @@ pub fn messages(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime,
 
 pub fn props(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime) -> bool {
     let mut changed = false;
-    let snapshot = project.clone();
-    ui.heading("Props");
-    if ui.button("Add prop").clicked() {
-        project.props.push(Prop {
-            id: Uuid::new_v4(),
-            name: "New prop".into(),
-            objects: Vec::new(),
-        });
-        changed = true;
+    changed |= overlay_creator(ui, project);
+    if runtime.output.deck.is_some() {
+        ui.small("Overlays are unavailable while PowerPoint or Keynote is playing.");
     }
+    let snapshot = project.clone();
     if project.props.is_empty() {
-        ui.label("No props yet — add a prop to show a graphic or text.");
+        ui.label("No overlays yet — add a lower third or logo.");
     }
     let mut remove = None;
     for (i, p) in project.props.iter_mut().enumerate() {
@@ -351,20 +349,25 @@ pub fn props(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime) ->
             .flat_map(|d| &d.slides)
             .flat_map(|s| &s.actions)
             .chain(project.macros.iter().flat_map(|m| &m.actions))
-            .any(|a| matches!(a, CueAction::TriggerProp{id} if *id == p.id));
+            .any(|a| matches!(a, CueAction::TriggerProp{id} | CueAction::HideProp{id} if *id == p.id));
         ui.push_id(p.id, |ui| {
             if crate::text::contains_gujarati(&p.name) {
                 crate::text::gu_label(ui, &p.name, crate::style::BODY);
             }
             ui.horizontal_wrapped(|ui| {
                 changed |= ui.text_edit_singleline(&mut p.name).changed();
-                if ui.button("Trigger").clicked() {
-                    let _ =
-                        runtime.apply_actions(&snapshot, &[CueAction::TriggerProp { id: p.id }]);
+                let on = runtime.output.props.contains(&p.id);
+                if ui.button(if on { "On" } else { "Off" }).clicked() {
+                    let action = if on {
+                        CueAction::HideProp { id: p.id }
+                    } else {
+                        CueAction::TriggerProp { id: p.id }
+                    };
+                    let _ = runtime.apply_actions(&snapshot, &[action]);
                 }
                 ui.menu_button(crate::style::icon('\u{e1fe}', 16.0), |ui| {
                     if ui
-                        .add_enabled(!used, egui::Button::new("Delete prop"))
+                        .add_enabled(!used, egui::Button::new("Delete overlay"))
                         .clicked()
                     {
                         remove = Some(i);
@@ -375,18 +378,337 @@ pub fn props(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime) ->
             if used {
                 ui.small("Used by a slide or macro action; remove those references first.");
             }
-            changed |= crate::inspector::objects(ui, &mut p.objects);
+            ui.collapsing("Edit", |ui| {
+                changed |= crate::inspector::objects(ui, &mut p.objects)
+            });
         });
     }
     if let Some(i) = remove {
         let id = project.props.remove(i).id;
-        runtime.output.props.retain(|p| *p != id);
+        let _ = runtime.apply_actions(&snapshot, &[CueAction::HideProp { id }]);
         changed = true;
     }
-    if ui.button("Clear props").clicked() {
+    if ui.small_button("All overlays off").clicked() {
         let _ = runtime.apply_actions(&snapshot, &[CueAction::ClearProps]);
     }
     changed
+}
+
+fn overlay_creator(ui: &mut egui::Ui, project: &mut Project) -> bool {
+    let mut changed = false;
+    let name_id = ui.make_persistent_id("lower-third-name");
+    let line_id = ui.make_persistent_id("lower-third-line");
+    let mut name = ui
+        .ctx()
+        .data_mut(|d| d.get_temp::<String>(name_id).unwrap_or_default());
+    let mut line = ui
+        .ctx()
+        .data_mut(|d| d.get_temp::<String>(line_id).unwrap_or_default());
+    ui.horizontal_wrapped(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut name)
+                .hint_text("Name")
+                .desired_width(110.0),
+        );
+        ui.add(
+            egui::TextEdit::singleline(&mut line)
+                .hint_text("Second line")
+                .desired_width(110.0),
+        );
+        if ui.button("+ Lower third").clicked() && !name.trim().is_empty() {
+            project.props.push(lower_third(name.trim(), line.trim()));
+            name.clear();
+            line.clear();
+            changed = true;
+        }
+    });
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(name_id, name);
+        d.insert_temp(line_id, line);
+    });
+
+    let corner_id = ui.make_persistent_id("logo-corner");
+    let size_id = ui.make_persistent_id("logo-size");
+    let mut corner = ui
+        .ctx()
+        .data_mut(|d| d.get_temp::<usize>(corner_id).unwrap_or(1));
+    let mut size = ui
+        .ctx()
+        .data_mut(|d| d.get_temp::<usize>(size_id).unwrap_or(1));
+    let notice_id = ui.make_persistent_id("logo-notice");
+    let mut notice = ui
+        .ctx()
+        .data_mut(|d| d.get_temp::<String>(notice_id).unwrap_or_default());
+    ui.horizontal(|ui| {
+        egui::ComboBox::from_id_salt("logo-corner")
+            .selected_text(["Top left", "Top right", "Bottom left", "Bottom right"][corner])
+            .show_ui(ui, |ui| {
+                for (i, label) in ["Top left", "Top right", "Bottom left", "Bottom right"]
+                    .iter()
+                    .enumerate()
+                {
+                    ui.selectable_value(&mut corner, i, *label);
+                }
+            });
+        egui::ComboBox::from_id_salt("logo-size")
+            .selected_text(["S · 8%", "M · 12%", "L · 18%"][size])
+            .show_ui(ui, |ui| {
+                for (i, label) in ["S · 8%", "M · 12%", "L · 18%"].iter().enumerate() {
+                    ui.selectable_value(&mut size, i, *label);
+                }
+            });
+        if ui.button("+ Logo…").clicked()
+            && let Some(path) = rfd::FileDialog::new()
+                .add_filter("Image", &["png", "jpg", "jpeg", "webp"])
+                .pick_file()
+        {
+            match image::image_dimensions(&path) {
+                Ok((w, h)) if w > 0 && h > 0 => {
+                    if let Some(rect) = logo_rect(w, h, size, corner) {
+                        project.props.push(Prop {
+                            id: Uuid::new_v4(),
+                            name: path
+                                .file_stem()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("Logo")
+                                .to_owned(),
+                            objects: vec![SlideObject::Image {
+                                id: Uuid::new_v4(),
+                                rect,
+                                path,
+                            }],
+                        });
+                        changed = true;
+                        notice.clear();
+                    } else {
+                        notice = "This logo is too tall at the selected size.".into();
+                    }
+                }
+                _ => notice = "Couldn't read that image. Choose a PNG, JPG, or WebP file.".into(),
+            }
+        }
+    });
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(corner_id, corner);
+        d.insert_temp(size_id, size);
+        d.insert_temp(notice_id, notice.clone());
+    });
+    if !notice.is_empty() {
+        ui.small(notice);
+    }
+    changed
+}
+
+fn lower_third(name: &str, second_line: &str) -> Prop {
+    let plate = Rect {
+        x: 0.05,
+        y: 0.74,
+        w: 0.42,
+        h: 0.14,
+    };
+    Prop {
+        id: Uuid::new_v4(),
+        name: name.to_owned(),
+        objects: vec![
+            SlideObject::Shape {
+                id: Uuid::new_v4(),
+                rect: plate.clone(),
+                color: crate::style::OVERLAY_PLATE.to_array(),
+                corner_radius: 6.0 / 1080.0,
+            },
+            SlideObject::Shape {
+                id: Uuid::new_v4(),
+                rect: Rect {
+                    x: 0.05,
+                    y: 0.74,
+                    w: 0.004,
+                    h: 0.14,
+                },
+                color: [
+                    crate::style::SAFFRON.r(),
+                    crate::style::SAFFRON.g(),
+                    crate::style::SAFFRON.b(),
+                    255,
+                ],
+                corner_radius: 0.0,
+            },
+            SlideObject::Text {
+                id: Uuid::new_v4(),
+                rect: Rect {
+                    x: 0.075,
+                    y: 0.755,
+                    w: 0.37,
+                    h: 0.055,
+                },
+                text: format!("**{}**", lumen_core::markup::escape_markup(name)),
+                style: TextStyle {
+                    font_size: Some(44.0),
+                    color: Some(crate::style::WHITE.to_array()),
+                    ..Default::default()
+                },
+                align: TextAlign::Left,
+            },
+            SlideObject::Text {
+                id: Uuid::new_v4(),
+                rect: Rect {
+                    x: 0.075,
+                    y: 0.815,
+                    w: 0.37,
+                    h: 0.045,
+                },
+                text: lumen_core::markup::escape_markup(second_line),
+                style: TextStyle {
+                    font_size: Some(30.0),
+                    color: Some(crate::style::WHITE.to_array()),
+                    ..Default::default()
+                },
+                align: TextAlign::Left,
+            },
+        ],
+    }
+}
+
+fn logo_rect(width: u32, height: u32, size: usize, corner: usize) -> Option<Rect> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let frac = *[0.08, 0.12, 0.18].get(size)?;
+    if corner > 3 {
+        return None;
+    }
+    let h = frac * 16.0 / 9.0 * height as f32 / width as f32;
+    if h > 0.94 {
+        return None;
+    }
+    Some(Rect {
+        x: if corner % 2 == 1 { 0.97 - frac } else { 0.03 },
+        y: if corner >= 2 { 0.97 - h } else { 0.03 },
+        w: frac,
+        h,
+    })
+}
+
+pub fn overlay_chips(ui: &mut egui::Ui, project: &Project, runtime: &mut Runtime) {
+    if project.props.is_empty() && runtime.output.deck.is_none() {
+        return;
+    }
+    crate::style::section(ui, "Overlays");
+    let snapshot = project.clone();
+    ui.horizontal_wrapped(|ui| {
+        for overlay in &project.props {
+            let on = runtime.output.props.contains(&overlay.id);
+            let chip = format!("{} · {}", overlay.name, if on { "On" } else { "Off" });
+            let width = (chip.chars().count() as f32 * crate::style::BODY * 0.8 + 16.0)
+                .clamp(88.0, ui.available_width().clamp(88.0, 240.0));
+            let response = ui
+                .scope_builder(
+                    egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
+                        ui.cursor().min,
+                        egui::vec2(width, crate::style::CONTROL),
+                    )),
+                    |chip_ui| crate::text::gu_selectable(chip_ui, on, &chip, crate::style::BODY),
+                )
+                .inner;
+            if response.clicked() {
+                let action = if on {
+                    CueAction::HideProp { id: overlay.id }
+                } else {
+                    CueAction::TriggerProp { id: overlay.id }
+                };
+                let _ = runtime.apply_actions(&snapshot, &[action]);
+            }
+        }
+        if ui.small_button("All overlays off").clicked() {
+            let _ = runtime.apply_actions(&snapshot, &[CueAction::ClearProps]);
+        }
+    });
+    if runtime.output.deck.is_some() {
+        ui.small("Overlays are unavailable while PowerPoint or Keynote is playing.");
+    }
+}
+
+#[cfg(test)]
+mod overlay_tests {
+    use super::{logo_rect, lower_third};
+    use lumen_core::{SlideObject, markup::strip_markup};
+
+    #[test]
+    fn lower_third_has_expected_geometry_and_literal_text() {
+        let prop = lower_third("A **bold** & guest", "Second [line]");
+        assert_eq!(prop.name, "A **bold** & guest");
+        assert_eq!(prop.objects.len(), 4);
+        let SlideObject::Shape {
+            rect,
+            color,
+            corner_radius,
+            ..
+        } = &prop.objects[0]
+        else {
+            panic!("plate should be first")
+        };
+        assert_eq!((rect.x, rect.y, rect.w, rect.h), (0.05, 0.74, 0.42, 0.14));
+        assert_eq!(*color, crate::style::OVERLAY_PLATE.to_array());
+        assert_eq!(*corner_radius, 6.0 / 1080.0);
+        let SlideObject::Shape { rect, color, .. } = &prop.objects[1] else {
+            panic!("accent should be second")
+        };
+        assert_eq!((rect.x, rect.y, rect.w, rect.h), (0.05, 0.74, 0.004, 0.14));
+        assert_eq!(
+            &color[..3],
+            &[
+                crate::style::SAFFRON.r(),
+                crate::style::SAFFRON.g(),
+                crate::style::SAFFRON.b(),
+            ]
+        );
+        let SlideObject::Text { text, style, .. } = &prop.objects[2] else {
+            panic!("name should be third")
+        };
+        assert_eq!(strip_markup(text), "A **bold** & guest");
+        assert_eq!(style.font_size, Some(44.0));
+        let SlideObject::Text { text, .. } = &prop.objects[3] else {
+            panic!("second line should be fourth")
+        };
+        assert_eq!(strip_markup(text), "Second [line]");
+    }
+
+    #[test]
+    fn logo_rect_preserves_aspect_and_places_each_corner() {
+        for size in 0..3 {
+            let expected_width = [0.08, 0.12, 0.18][size];
+            let expected_height = expected_width;
+            for corner in 0..4 {
+                let rect = logo_rect(1600, 900, size, corner).unwrap();
+                assert!((rect.w / rect.h * 16.0 / 9.0 - 1600.0 / 900.0).abs() < 0.001);
+                assert_eq!(rect.w, expected_width);
+                assert!((rect.h - expected_height).abs() < 0.000001);
+                assert_eq!(
+                    rect.x,
+                    if corner % 2 == 1 {
+                        0.97 - expected_width
+                    } else {
+                        0.03
+                    }
+                );
+                assert_eq!(
+                    rect.y,
+                    if corner >= 2 {
+                        0.97 - expected_height
+                    } else {
+                        0.03
+                    }
+                );
+            }
+        }
+        for (width, height) in [(3000, 1000), (1000, 3000)] {
+            let rect = logo_rect(width, height, 0, 0).unwrap();
+            assert!((rect.w / rect.h * 16.0 / 9.0 - width as f32 / height as f32).abs() < 0.001);
+        }
+        assert_eq!(logo_rect(0, 900, 1, 1), None);
+        assert_eq!(logo_rect(100, 900, 2, 3), None);
+        assert_eq!(logo_rect(1000, 1000, 3, 0), None);
+        assert_eq!(logo_rect(1000, 1000, 1, 4), None);
+    }
 }
 
 #[cfg(test)]

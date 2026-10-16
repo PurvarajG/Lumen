@@ -3,7 +3,7 @@ use lumen_core::{
 };
 use uuid::Uuid;
 
-pub fn slide(ui: &mut egui::Ui, slide: &mut Slide, project: &Project) -> bool {
+pub fn slide(ui: &mut egui::Ui, slide: &mut Slide, project: &mut Project) -> bool {
     let mut changed = false;
     ui.heading("Slide inspector");
     changed |= ui.text_edit_singleline(&mut slide.label).changed();
@@ -17,6 +17,21 @@ pub fn slide(ui: &mut egui::Ui, slide: &mut Slide, project: &Project) -> bool {
     changed |= ui
         .add(egui::TextEdit::multiline(&mut slide.text).desired_rows(5))
         .changed();
+    if let Some(theme) = project
+        .themes
+        .iter_mut()
+        .find(|theme| theme.id == slide.theme_id)
+    {
+        let mut enabled = theme.backdrop == lumen_core::Backdrop::BottomGradient;
+        if ui.checkbox(&mut enabled, "Bottom gradient").changed() {
+            theme.backdrop = if enabled {
+                lumen_core::Backdrop::BottomGradient
+            } else {
+                lumen_core::Backdrop::None
+            };
+            changed = true;
+        }
+    }
     ui.collapsing("Text box (%)", |ui| {
         changed |= rect_editor(ui, &mut slide.text_rect)
     });
@@ -252,14 +267,15 @@ fn action_editor(ui: &mut egui::Ui, a: &mut CueAction, p: &Project) -> bool {
         "Clear media",
         "Clear audio",
         "Clear messages",
-        "Clear props",
+        "All overlays off",
         "Clear message",
         "Stop audio",
         "Stage message",
         "Start timer",
         "Pause timer",
         "Reset timer",
-        "Trigger prop",
+        "Show overlay",
+        "Hide overlay",
         "Show message",
         "Play deck",
         "Stop deck",
@@ -277,15 +293,15 @@ fn action_editor(ui: &mut egui::Ui, a: &mut CueAction, p: &Project) -> bool {
     if selected != idx {
         let available = match selected {
             10..=12 => !p.timers.is_empty(),
-            13 => !p.props.is_empty(),
-            14 => !p.messages.is_empty(),
+            13..=14 => !p.props.is_empty(),
+            15 => !p.messages.is_empty(),
             _ => true,
         };
         if available {
             *a = default_action(selected, p);
             changed = true;
         } else {
-            ui.small("Create a matching timer, prop, or message before adding this action.");
+            ui.small("Create a matching timer, overlay, or message before adding this action.");
         }
     }
     let reference_kind = match a {
@@ -293,6 +309,7 @@ fn action_editor(ui: &mut egui::Ui, a: &mut CueAction, p: &Project) -> bool {
         | CueAction::PauseTimer { .. }
         | CueAction::ResetTimer { .. } => 1,
         CueAction::TriggerProp { .. } => 2,
+        CueAction::HideProp { .. } => 2,
         CueAction::ShowMessage { .. } => 3,
         _ => 0,
     };
@@ -312,6 +329,7 @@ fn action_editor(ui: &mut egui::Ui, a: &mut CueAction, p: &Project) -> bool {
         | CueAction::PauseTimer { id }
         | CueAction::ResetTimer { id }
         | CueAction::TriggerProp { id }
+        | CueAction::HideProp { id }
         | CueAction::ShowMessage { id } => {
             let list: Vec<(Uuid, String)> = match reference_kind {
                 1 => p.timers.iter().map(|x| (x.id, x.name.clone())).collect(),
@@ -357,9 +375,10 @@ fn action_index(a: &CueAction) -> usize {
         CueAction::PauseTimer { .. } => 11,
         CueAction::ResetTimer { .. } => 12,
         CueAction::TriggerProp { .. } => 13,
-        CueAction::ShowMessage { .. } => 14,
-        CueAction::PlayDeck { .. } => 15,
-        CueAction::StopDeck => 16,
+        CueAction::HideProp { .. } => 14,
+        CueAction::ShowMessage { .. } => 15,
+        CueAction::PlayDeck { .. } => 16,
+        CueAction::StopDeck => 17,
     }
 }
 fn default_action(i: usize, p: &Project) -> CueAction {
@@ -386,10 +405,13 @@ fn default_action(i: usize, p: &Project) -> CueAction {
         13 => CueAction::TriggerProp {
             id: p.props.first().map_or_else(Uuid::new_v4, |x| x.id),
         },
-        14 => CueAction::ShowMessage {
+        14 => CueAction::HideProp {
+            id: p.props.first().map_or_else(Uuid::new_v4, |x| x.id),
+        },
+        15 => CueAction::ShowMessage {
             id: p.messages.first().map_or_else(Uuid::new_v4, |x| x.id),
         },
-        15 => CueAction::PlayDeck {
+        16 => CueAction::PlayDeck {
             path: Default::default(),
         },
         _ => CueAction::StopDeck,

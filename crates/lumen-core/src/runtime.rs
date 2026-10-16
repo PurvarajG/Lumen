@@ -29,6 +29,8 @@ pub struct OutputState {
     #[serde(default)]
     pub deck: Option<std::path::PathBuf>,
     pub live: Option<LiveSlide>,
+    #[serde(default)]
+    pub underlay: Option<crate::Background>,
     pub blackout: bool,
     pub clear_text: bool,
     pub stage_message: String,
@@ -51,6 +53,17 @@ pub struct OutputState {
     pub audio_clear_serial: u64,
     #[serde(default)]
     pub media_cleared: bool,
+}
+
+impl OutputState {
+    pub fn effective_background(&self) -> Option<&crate::Background> {
+        let live = self.live.as_ref()?;
+        if live.slide.background.is_transparent() {
+            self.underlay.as_ref()
+        } else {
+            Some(&live.slide.background)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -249,6 +262,12 @@ impl Runtime {
 
         let mut candidate = self.clone();
         candidate.sync_timers(project);
+        candidate.output.underlay =
+            if slide.background.is_transparent() && !self.output.media_cleared {
+                self.output.effective_background().cloned()
+            } else {
+                None
+            };
         candidate.output.live = Some(LiveSlide {
             document_id,
             document_name: document.name.clone(),
@@ -404,7 +423,7 @@ impl Runtime {
                         return Err(CoreError::MissingTimer(*id));
                     }
                 }
-                CueAction::TriggerProp { id } => {
+                CueAction::TriggerProp { id } | CueAction::HideProp { id } => {
                     if project.prop(*id).is_none() {
                         return Err(CoreError::MissingProp(*id));
                     }
@@ -427,6 +446,7 @@ impl Runtime {
                 CueAction::PlayDeck { path } => self.output.deck = Some(path.clone()),
                 CueAction::StopDeck => self.output.deck = None,
                 CueAction::ClearSlide => {
+                    // Like an opaque slide's own background, a caption's underlay stays visible.
                     self.output.deck = None;
                     self.output.clear_text = true;
                 }
@@ -434,6 +454,7 @@ impl Runtime {
                 CueAction::ClearAll => {
                     self.output.deck = None;
                     self.output.live = None;
+                    self.output.underlay = None;
                     self.output.clear_text = false;
                     self.output.props.clear();
                     self.output.prop_snapshots.clear();
@@ -485,6 +506,14 @@ impl Runtime {
                                 state.value_secs = 0.0;
                             }
                         }
+                    }
+                }
+                CueAction::HideProp { id } => {
+                    self.normalize_prop_snapshots(project);
+                    if let Some(index) = self.output.props.iter().position(|active| active == id) {
+                        self.output.props.remove(index);
+                        self.output.prop_snapshots.remove(index);
+                        self.output.prop_theme_snapshots.remove(index);
                     }
                 }
                 CueAction::TriggerProp { id } => {
