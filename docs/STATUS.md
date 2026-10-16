@@ -1,38 +1,23 @@
 # Lumen Presenter status
 
-Objective: full standalone Rust alternative to ProPresenter. User authorized autonomous engineering and efficient model delegation on 2026-10-16. Latest steering: finish the build and use gpt-taste to fix the UI.
+Objective: standalone Rust alternative to ProPresenter for sabha/mandir AV volunteers (see PRODUCT.md). Plan: docs/superpowers/plans/2026-10-16-finish.md. Orchestrated by Claude Opus 5.5; executed by Codex and Antigravity workers in git worktrees, reviewed and merged by the orchestrator.
 
-## Delivered foundation
+## Release candidate 1.0.0-rc.1 (2026-10-16)
 
-- Rust workspace with reviewed pure core, owned FFmpeg media adapter, and native egui/WGPU workbench. Larger models handled architecture/review; gpt-6-luna implemented modules. Parent completed final changes after worker usage exhaustion.
-- Core committed as a380657; media committed as c229612. App integration and the requested UI refinement complete the foundation milestone.
-- Native editor provides blank shows, editable title/documents/slides/themes, playlist order, text import, notes, macros, countdowns and stage messages. Editable state remains separate from cloned live output.
-- Audience/stage windows render independently. Video cancellation/EOF/retrigger, repaint, text anchoring, close/reopen and native unsaved Quit defects found in review were fixed and exercised.
-- gpt-taste guidance adapted to the Rust workbench: dark graphite, Geist, clear contrast/live states, large preview, consistent thumbnails and separate edit/stage inspector views. See UI.md.
-- Local bundle: `.local/dist/Lumen Presenter.app` (0.1.0 debug build, ad-hoc signed). FFmpeg remains an external media dependency. No reference app is needed to run Lumen.
+`scripts/package-macos.sh --release` → `.local/dist/Lumen-Presenter-1.0.0-rc.1-macos-arm64.dmg` (ad-hoc signed, not notarized). `hdiutil verify` and `codesign --verify --deep --strict` pass; bundle contains no ChitraUni or book text.
 
-## Verification
+Crates: lumen-core (schema v2: text boxes, markup, objects, persisted timers, props, messages, history), lumen-media (FFmpeg video, thumbnails, rodio audio), lumen-text (cosmic-text shaping; Poppins bundled, ChitraUni loaded from installed fonts, Noto Sans Gujarati fallback), lumen-interchange (OpenLyrics, text, experimental .pro text), lumen-control (HTTP token API, OSC, MIDI), lumen-library (anirdesh.com downloader, 15 parsers, search, slides), lumen-app (Present/Prepare console per DESIGN.md).
 
-Formatting, all 44 workspace tests, Clippy with warnings denied and native build passed. Parent exercised native editing/live isolation, generated video, outputs, countdown/message, save and Quit flows. Final independent source review reports no residual blocker. Full evidence and limitations: VERIFICATION.md.
+## Verification at rc.1
 
-## Research
+- `cargo fmt --all -- --check`, `cargo test --workspace` (194 passed, 0 failed), `cargo clippy --workspace --all-targets -- -D warnings` (clean).
+- Native, by the orchestrator with window-only captures: console in Present mode at 1500×982; Gujarati slide shaped correctly in preview, thumbnails and live monitor; Return sends the on-deck cue live and the primary button switches to Next; release bundle launches with the new console.
+- Real network: lumen-library downloaded 3 Vachanamrut units and 3 kirtans at ≥ 1.1 s per request.
 
-REA 6.5.0 and upstream source are local. Ghidra 12.1.4/OpenJDK21 doctor passed; focused native analysis completed. Reference app: ProPresenter 21.4 build352583705 at /Applications/ProPresenter.app, read-only except original test documents created through its UI. Static/native/UI findings and original Unicode fixtures are documented under research. Raw artifacts stay ignored in .local/research.
-- Anirdesh.com structural research completed (R2 brief): mapped URL templates, hierarchy, DOM selectors, dual-language extraction, and slide units across all 16 scripture sections in docs/research/anirdesh-structure.md. Documented Nginx User-Agent filtering behavior and exact unit counts. Sample HTML files preserved in .local/research/anirdesh/ (untracked).
+## Not verified / known gaps
 
-## Remaining
-
-Full ProPresenter parity is not complete. PARITY.md tracks absent features. The next interchange milestone is designed but unimplemented: OpenLyrics plus explicitly experimental, text-only extraction from the observed ProPresenter fixture field paths. Rich layers, fades, undo/recovery, production audio/output adapters and service integrations remain future work. Do not advertise those as available.
-
-
-## B1 console executor (wave/b1-console, 2026-10-16)
-
-Uncommitted implementation in the B1 worktree; **blocked**, not a verified milestone. Core tests 69 passed and latest app suite 35 passed. Workspace tests stop at lumen-control `test_midi_ports_query` because CoreMIDI initialization fails on this host. Per executor instruction, stopped without modifying that out-of-scope crate. Final fmt check, clippy, smoke and native screenshots remain pending. Report: `/Users/purvarajsinhgohil/Developer/PROPRESENTER/.local/reports/b1-console.md`. Parent owns integration and commit; no git writes attempted.
-
-## C1 render executor (wave/c1-render, 2026-10-16)
-
-Uncommitted shaped rendering, live prop/message snapshots, console polish and display settings implemented; **blocked, not a verified milestone**. Workspace tests passed before final small edits. Clippy reports `items_after_test_module` for stage_text in render.rs; final fmt check/tests/clippy need rerunning. Required Quartz window enumeration returned None in the sandbox, preventing prescribed window-only captures; stopped per executor instruction. Native rendering and monitor behavior remain unverified. Consolidated report: `/Users/purvarajsinhgohil/Developer/PROPRESENTER/.local/reports/c1.md`. Parent owns review and commit; no git writes attempted.
-
-## C2 books/search executor (wave/c2-books, 2026-10-16)
-
-Uncommitted Books catalog/download queue, unit preview/conversion, grouped search/keyboard flow, layout polish and Gujarati metric sizing implemented. **Blocked on native verification, not a verified milestone.** Final-source fmt and workspace Clippy (`-D warnings`) passed; app suite 50 passed before final refinements, final panel suite 5 passed and Gujarati sizing test passed. Native smoke built but stalled before initialization with LaunchServices/HIServices XPC connection errors in the sandbox; process inspection was denied. Stopped per executor instruction, so full workspace tests remain pending. Parent owns native screenshots and git commit; no git writes attempted. Report: `/Users/purvarajsinhgohil/Developer/PROPRESENTER/.local/reports/c2.md`.
+- The Books panel download → browse → add-to-running-order flow and Cmd+F search were not exercised by hand (synthetic input could not reach the app without Accessibility permission); covered by unit tests only.
+- Audience/stage windows on a second physical display, fullscreen placement and Identify are implemented but untested on multi-monitor hardware.
+- Transitions, props and message banner rendering verified by tests, not by native capture.
+- Notarization, Windows/Linux, NDI/Syphon/SDI, DMX, timecode, recording/streaming and cloud sync are out of scope for 1.0 (PARITY.md).
+- FFmpeg/ffprobe remain external requirements for video and thumbnails.
