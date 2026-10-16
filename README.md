@@ -43,6 +43,11 @@ To download books:
 
 ---
 
+## PowerPoint, Keynote and PDF
+
+- **PDF (still pages):** File → Import… a `.pdf`. Each page becomes a slide, rendered from the PDF's vectors at every output's real pixel size, so text and shapes stay sharp on the projector. Export a PowerPoint or Keynote deck as PDF when it has no animations.
+- **PowerPoint / Keynote (animated decks):** File → Import… a `.pptx`, `.ppt` or `.key`. Lumen creates a "Play" cue; going live on it opens the deck in PowerPoint or Keynote and starts the real slideshow, so builds, transitions and embedded video play exactly as authored. While it plays, Lumen's Next/Previous (buttons, arrow keys, remote, OSC, MIDI) drive the deck; F1/F2 or Stop deck ends it. macOS asks once for permission to let Lumen control PowerPoint/Keynote. Requires PowerPoint or Keynote installed.
+
 ## Keyboard Shortcuts (Present Mode)
 
 Shortcuts are active during live operation and are automatically suppressed while editing text fields.
