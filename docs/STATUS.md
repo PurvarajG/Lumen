@@ -43,4 +43,15 @@ Not verified: drag-and-drop/Add files of a deck through the UI and the context-m
 
 Prepared `docs/design/lumen-brand-v1/` and sibling ZIP for Claude to integrate the selected saffron L/projected-light identity. Includes editable vector redraws, outlined Poppins lockups, transparent PNGs, macOS ICNS/iconset, offline proof sheet, concept references, scoped implementation instructions, colour/sizing tokens and a ready-to-paste Claude prompt. The current console layout and full feature set are authoritative; generated mockups are illustrative. Remove the prominent Present-mode show heading while preserving editable/persisted project names in Prepare mode.
 
-Package asset validation is documented in `VERIFICATION.md`. Application source and runtime assets remain unchanged; branding integration and native regression checks are pending Claude implementation.
+Package asset validation is documented in `VERIFICATION.md`. Integrated in wave F1 below.
+
+## Wave F1: brand lockup and app icon (2026-10-16)
+
+Integrated the approved saffron L / projected-light identity as a small branding change; the console layout is unchanged.
+
+- Header: the 20 pt show-name heading in Present is replaced by the lockup (28 pt mark from embedded 28/56 px PNGs, cached once; "Lumen" Poppins SemiBold 18; "PRESENTER" Poppins Medium 11, TEXT_DIM, tracked). It is static, with tooltip "Lumen Presenter · <show>". Present steps down to mark + Lumen below a 1200 pt first row and to the mark below 1000 pt; Prepare shows mark + Lumen (mark only below 1200 pt), a separator, then the existing show-name field (160 pt, "Show name" hint, same `project.name` binding). Everything after it in row 1 and all of row 2 are untouched. Demo data and saved names are unchanged.
+- Icon: `assets/icon.svg` and `assets/lumen-mark.svg` are the single geometry source. `scripts/generate-icon.sh` renders them with AppKit (no flame/diya code, no new tools) into `AppIcon.icns` (10 sizes) and the two mark PNGs. The packaged bundle's `AppIcon.icns` is byte-identical to the generated one.
+
+Verified: fmt, clippy -D warnings, 237 workspace tests. Window-only before/after captures (`.local/qa/f1/shots`) in Present and Prepare at 1500, 1280 and 1024 pt on the Retina laptop (2x), and 1500 pt on the L27q (1x): the mark is crisp with its diagonal gap at both scales, and control order and row 2 match the before shots. The header row is about 3 pt taller because the mark is 28 pt.
+
+Not verified by hand: typing a new show name and saving (synthetic keystrokes and value setting do not reach egui text fields here; the field keeps the same binding and dirty tracking as before), the brand tooltip, and the Dock/Finder rendering of the installed app (Quick Look thumbnailing hung). Packaging overwrote the local rc.2 DMG with this build; the GitHub rc.2 asset is the earlier build.
