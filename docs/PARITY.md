@@ -15,7 +15,7 @@ States: **Verified** = exercised through automated tests or native UI checks; **
 | Macros and cue actions | Verified foundation | Atomic ordered core tests; native ClearAll media cleanup; no visual macro editor |
 | Text import | Core verified; UI wired | Blank-line/CRLF tests; UTF-8 txt/md picker with 4MiB limit |
 | Versioned project save/load | Verified | Roundtrip/replacement/bounds tests; native Open and Save/Quit exercised |
-| ProPresenter native document import | Implemented text extraction | `lumen-interchange` protobuf field parser extracts cue order, visible text, Unicode, and RTF formatting; tested on real reference fixtures |
+| ProPresenter native document import | Implemented, experimental, text only | `lumen-interchange` extracts cue order and plain text (Unicode, escapes) from the observed ProPresenter 21.4 path; verified on two owned fixtures; formatting, media, layout and actions are not imported |
 | OpenLyrics interchange | Verified | `lumen-interchange` OpenLyrics XML import & export with namespace, verse order, line break roundtripping, and malformed document handling tests |
 | Layered slide objects / rich text | Implemented | `SlideObject` model, inline rich-text markup spans (bold, italic, underline, color), and `cosmic-text` decoration rendering |
 | Transitions | Implemented | Cut, Dissolve, FadeBlack, and Push transitions modeled with duration validation and live snapshot state |
@@ -27,7 +27,7 @@ States: **Verified** = exercised through automated tests or native UI checks; **
 | Audio routing and strict A/V sync | Implemented audio bin & playback | Pure-Rust `rodio` audio playback with volume fading, sine wave completion test, and device enumeration; sample-accurate multi-channel matrix unverified |
 | MIDI / OSC / DMX / timecode | Implemented MIDI & OSC | `lumen-control` OSC UDP listener (`/lumen/next`, etc.) and MIDI Note-On mapper; DMX and SMPTE timecode planned |
 | Remote control / API | Verified | `lumen-control` HTTP REST API with constant-time bearer token auth, `/status` JSON snapshot, and `/command` dispatcher tested |
-| anirdesh Books download and search | Verified | `lumen-library` downloader (with 403 backoff and cancellation tests), HTML parsers for 16 canonical books, ranked in-memory search index, and slide generation tests |
+| anirdesh Books download and search | Implemented; core verified, UI flow not clicked through | `lumen-library`: 15 book parsers (synthetic tests + saved real samples), rate-limited resumable downloader (stops on 403/404, cancellation tests), search index, slide generation; a real 6-unit download was exercised from the crate. The app Books panel is unit-tested but its download/add flow has not been exercised by hand |
 | Gujarati shaping and font fallback | Verified | `lumen-text` shaping tests for conjuncts and matras, bundled Noto Sans Gujarati OFL fallback, and runtime ChitraUni font detection |
 | Scripture / licensed content services | Planned | User-supplied or licensed sources and import verification; offline anirdesh scriptures implemented independently |
 | Cloud/team synchronization | Planned | Conflict/persistence/offline/recovery design and tests |
