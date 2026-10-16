@@ -32,6 +32,7 @@ pub const SECTION_GAP: f32 = 20.0;
 pub const LEFT_WIDTH: f32 = 280.0;
 pub const RIGHT_WIDTH: f32 = 360.0;
 pub const ON_DECK_RAIL: f32 = 3.0;
+pub const BRAND_MARK: f32 = 28.0;
 
 pub fn install(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
