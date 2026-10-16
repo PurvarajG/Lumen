@@ -1,0 +1,15 @@
+[package]
+name = "lumen-interchange"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lumen-core = { path = "../lumen-core" }
+uuid.workspace = true
+thiserror.workspace = true
+roxmltree = "0.20"
+rtf-parser = { version = "=0.4.3", default-features = false }
+
+[dev-dependencies]
+tempfile.workspace = true
