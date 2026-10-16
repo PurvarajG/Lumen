@@ -32,7 +32,7 @@ Before cutting a release:
    Update the `version` field in the root `Cargo.toml` under `[workspace.package]`:
    ```toml
    [workspace.package]
-   version = "1.0.0-rc.1"
+   version = "1.0.0-rc.2"
    ```
    All workspace crates inherit this version automatically via `version.workspace = true`.
 
@@ -70,7 +70,7 @@ Generate SHA-256 checksums for the disk image and application bundle:
 
 ```sh
 cd .local/dist
-shasum -a 256 Lumen-Presenter-1.0.0-rc.1-macos-arm64.dmg > Lumen-Presenter-1.0.0-rc.1-macos-arm64.dmg.sha256
+shasum -a 256 Lumen-Presenter-1.0.0-rc.2-macos-arm64.dmg > Lumen-Presenter-1.0.0-rc.2-macos-arm64.dmg.sha256
 ```
 
 Publish both the `.dmg` and `.sha256` files in the GitHub release or distribution channel.

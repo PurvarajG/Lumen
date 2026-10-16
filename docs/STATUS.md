@@ -22,6 +22,10 @@ Crates: lumen-core (schema v2: text boxes, markup, objects, persisted timers, pr
 - Notarization, Windows/Linux, NDI/Syphon/SDI, DMX, timecode, recording/streaming and cloud sync are out of scope for 1.0 (PARITY.md).
 - FFmpeg/ffprobe remain external requirements for video and thumbnails.
 
+## Release candidate 1.0.0-rc.2 (2026-10-16)
+
+Wave E3 below. `scripts/package-macos.sh --release` → `.local/dist/Lumen-Presenter-1.0.0-rc.2-macos-arm64.dmg` (ad-hoc signed, not notarized). `hdiutil verify` and `codesign --verify --deep --strict` pass; Info.plist reports 1.0.0-rc.2; no ChitraUni in the image; bundled binary passes `--smoke-test`.
+
 ## Wave E3: decks, captions and overlays (2026-10-16)
 
 From user feedback on a real two-screen run (laptop + 27" external): PowerPoint mirrored a plain show on both screens with no presenter view, Keynote decks did nothing, book captions sat mid-screen, and there were no lower thirds or logos.
