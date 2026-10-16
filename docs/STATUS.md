@@ -21,3 +21,16 @@ Crates: lumen-core (schema v2: text boxes, markup, objects, persisted timers, pr
 - Transitions, props and message banner rendering verified by tests, not by native capture.
 - Notarization, Windows/Linux, NDI/Syphon/SDI, DMX, timecode, recording/streaming and cloud sync are out of scope for 1.0 (PARITY.md).
 - FFmpeg/ffprobe remain external requirements for video and thumbnails.
+
+## Wave E3: decks, captions and overlays (2026-10-16)
+
+From user feedback on a real two-screen run (laptop + 27" external): PowerPoint mirrored a plain show on both screens with no presenter view, Keynote decks did nothing, book captions sat mid-screen, and there were no lower thirds or logos.
+
+- Decks: `.pptx/.ppt` (and `.key` with Keynote) export to PDF through their own app into its sandbox container, cached by path/size/mtime, one PDF slide per page with speaker notes. They fill the audience output and overlays sit on top; the console (live, up next, notes) is the presenter view. Context menu "Play in PowerPoint/Keynote instead" keeps animations and now starts PowerPoint in presenter mode (presenter view on the laptop, full-screen show on the external — verified by screenshots). Keynote is not installed on the test Mac: `.key` shows "Keynote isn't installed" with a Get Keynote button; the Keynote export script is untested.
+- PDF render fix: `CGPDFPageGetDrawingTransform` never scales up, so a 720×405 pt slide was drawn at 1:1 in the middle of a 2560 px output. Pages now scale to fill; regression test renders above natural size.
+- Captions: a slide with a fully transparent background keeps the background underneath (video keeps playing, deck page stays). Book slides use a "Caption" theme: bottom-aligned, bottom black gradient, text shadow. Clear Slide hides the caption and keeps the underlay.
+- Overlays: lower-third and logo presets with per-overlay On/Off (`CueAction::HideProp`), chips in Present mode.
+
+Verified: fmt, clippy -D warnings, 235 workspace tests. Native on the external display via the HTTP API: video → caption over playing video → deck page full-screen → lower third + logo → caption over the deck; operator console shows the Overlays chips. The PowerPoint export script was run against a real deck (closed and already-open cases).
+
+Not verified: drag-and-drop/Add files of a deck through the UI and the context-menu Play path (no synthetic clicks); Keynote; logo picking opens the file dialog on the UI thread, so outputs pause while it is open (set logos up before the service).

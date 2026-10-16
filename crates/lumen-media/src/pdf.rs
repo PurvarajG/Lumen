@@ -94,6 +94,7 @@ mod native {
         fn CGContextSetRGBFillColor(context: CGContextRef, r: f64, g: f64, b: f64, a: f64);
         fn CGContextFillRect(context: CGContextRef, rect: CGRect);
         fn CGContextConcatCTM(context: CGContextRef, transform: CGAffineTransform);
+        fn CGContextScaleCTM(context: CGContextRef, sx: f64, sy: f64);
         fn CGContextDrawPDFPage(context: CGContextRef, page: CGPDFPageRef);
     }
 
@@ -239,11 +240,14 @@ mod native {
             CGContextSetRGBFillColor(context.0, 1.0, 1.0, 1.0, 1.0);
             CGContextFillRect(context.0, out);
             // A CGBitmapContext already stores row 0 as the visual top, so no flip is needed.
+            // CGPDFPageGetDrawingTransform never scales up, so map the page at its own size
+            // and scale the context: a 720×405 pt slide must fill a 2560 px output.
+            CGContextScaleCTM(context.0, width as f64 / page_w, height as f64 / page_h);
             let rect = CGRect {
                 origin: CGPoint { x: 0.0, y: 0.0 },
                 size: CGSize {
-                    width: width as f64,
-                    height: height as f64,
+                    width: page_w,
+                    height: page_h,
                 },
             };
             let transform = CGPDFPageGetDrawingTransform(page, 1, rect, 0, true);
@@ -410,6 +414,15 @@ mod tests {
             &[255, 0, 0],
             "lower-left fill should appear near the bottom"
         );
+        // Larger than the 80×40 pt page: content must scale up, not sit at 1:1.
+        let big = render_pdf_page(&path, 1, 320, 320).unwrap();
+        assert_eq!((big.width, big.height), (320, 160));
+        let big_pixel = |x: usize, y: usize| {
+            let at = (y * big.width as usize + x) * 4;
+            &big.rgba[at..at + 3]
+        };
+        assert_eq!(big_pixel(240, 20), &[0, 0, 255]);
+        assert_eq!(big_pixel(40, 140), &[255, 0, 0]);
         let rotated = render_pdf_page(&path, 2, 80, 80).unwrap();
         assert_eq!((rotated.width, rotated.height), (40, 80));
         assert!(render_pdf_page(&path, 0, 80, 80).is_err());
