@@ -2,11 +2,15 @@
 
 use std::path::Path;
 
+mod audio;
 mod player;
 mod probe;
+mod thumbnail;
 
+pub use audio::{AudioOptions, AudioPlayer, output_devices};
 pub use player::{Frame, MediaPlayer, PlaybackOptions};
 pub use probe::{MediaInfo, probe, tool_availability};
+pub use thumbnail::{ThumbnailCache, thumbnail};
 
 /// Errors produced while validating, probing, or decoding media.
 #[derive(Debug)]

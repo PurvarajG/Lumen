@@ -7,6 +7,19 @@ license.workspace = true
 [dependencies]
 libc = "0.2"
 serde_json.workspace = true
+rodio = {
+    version = "0.21.1",
+    default-features = false,
+    features = [
+        "playback",
+        "symphonia-wav",
+        "symphonia-pcm",
+        "symphonia-mp3",
+        "symphonia-flac",
+        "symphonia-isomp4",
+        "symphonia-aac",
+    ],
+}
 
 [dev-dependencies]
 tempfile.workspace = true
