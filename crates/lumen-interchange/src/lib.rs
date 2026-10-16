@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fs::File, io::Read, path::Path};
 
+use lumen_core::markup::{escape_markup, strip_markup};
 use lumen_core::{Document, Slide};
 use thiserror::Error;
 use uuid::Uuid;
@@ -254,8 +255,7 @@ pub fn export_openlyrics(document: &Document) -> Result<String, InterchangeError
         .map(|i| format!("v{}", i + 1))
         .collect();
     for (i, slide) in document.slides.iter().enumerate() {
-        // parent: strip markup at merge
-        let text = &slide.text;
+        let text = &strip_markup(&slide.text);
         let lines = text
             .split('\n')
             .map(xml_escape)
@@ -359,7 +359,7 @@ pub fn import_propresenter(
 fn text_slide(label: &str, text: &str, theme_id: Uuid) -> Slide {
     let mut slide = Slide::new(theme_id);
     slide.label = label.into();
-    slide.text = text.into();
+    slide.text = escape_markup(text);
     slide
 }
 
@@ -1075,7 +1075,7 @@ mod tests {
         let b = std::fs::read("/Users/purvarajsinhgohil/Developer/PROPRESENTER/.local/research/Lumen-Unicode-Fixture.pro").unwrap();
         let report = import_propresenter(&b, "fixture", theme).unwrap();
         assert_eq!(
-            report.document.slides[1].text,
+            strip_markup(&report.document.slides[1].text),
             "Café — naïve\nUnicode: Ω שלום 😀\nEscapes: {brace} \\"
         );
     }
