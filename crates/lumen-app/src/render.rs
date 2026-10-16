@@ -6,8 +6,8 @@ use std::{
 
 use egui::{Color32, Pos2, Rect, Stroke, TextureHandle, Vec2};
 use lumen_core::{
-    Background, LiveSlide, OutputState, Project, PushDirection, Runtime, SlideObject, TextAlign,
-    TextStyle, Transition, VerticalAlign, markup::Span,
+    Backdrop, Background, LiveSlide, OutputState, Project, PushDirection, Runtime, SlideObject,
+    TextAlign, TextStyle, Transition, VerticalAlign, markup::Span,
 };
 
 #[derive(Clone)]
@@ -23,6 +23,8 @@ struct Scene<'a> {
     blackout: bool,
     clear_text: bool,
     media_cleared: bool,
+    background: Option<&'a Background>,
+    empty_color: Color32,
     media: Option<&'a TextureHandle>,
     images: &'a HashMap<PathBuf, TextureHandle>,
 }
@@ -167,33 +169,69 @@ fn paint_scene(
     let Some(live) = scene.live else {
         return;
     };
-    let background = match &live.slide.background {
-        Background::Solid(rgba) => color(*rgba),
-        Background::Pdf { .. } => crate::style::BLACK,
-        _ => color(live.theme.background_color),
+    paint_background(ui, canvas, scene, clip_rect, opacity);
+    paint_slide_layer(ui, canvas, live, scene, clip_rect, opacity);
+}
+
+fn paint_background(ui: &egui::Ui, canvas: Rect, scene: &Scene<'_>, clip_rect: Rect, opacity: f32) {
+    let painter = painter(ui, clip_rect, opacity);
+    let background = match scene.background {
+        Some(Background::Solid(rgba)) if rgba[3] != 0 => color(*rgba),
+        _ => scene.empty_color,
     };
     painter.rect_filled(canvas, 0.0, background);
-    let pdf = if let Background::Pdf { path, page } = &live.slide.background {
+    let pdf = if let Some(Background::Pdf { path, page }) = scene.background {
         crate::pdf::texture(ui, path, *page, canvas)
     } else {
         None
     };
     if !scene.media_cleared
-        && let Some(texture) = pdf.as_ref().or(scene.media)
         && matches!(
-            live.slide.background,
-            Background::Image { .. } | Background::Video { .. } | Background::Pdf { .. }
+            scene.background,
+            Some(Background::Image { .. } | Background::Video { .. } | Background::Pdf { .. })
         )
+        && let Some(texture) = pdf.as_ref().or(scene.media)
     {
-        let image_rect = fitted(canvas, texture.size_vec2());
         painter.image(
             texture.id(),
-            image_rect,
+            fitted(canvas, texture.size_vec2()),
             Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
             crate::style::WHITE,
         );
     }
+}
+
+fn bottom_gradient(canvas: Rect, text_rect: &lumen_core::Rect) -> egui::Mesh {
+    let top = canvas.top() + canvas.height() * (text_rect.y - 0.06).clamp(0.0, 0.70);
+    let mut mesh = egui::Mesh::default();
+    for (pos, color) in [
+        (Pos2::new(canvas.left(), top), Color32::TRANSPARENT),
+        (Pos2::new(canvas.right(), top), Color32::TRANSPARENT),
+        (canvas.left_bottom(), crate::style::CAPTION_GRADIENT),
+        (canvas.right_bottom(), crate::style::CAPTION_GRADIENT),
+    ] {
+        mesh.colored_vertex(pos, color);
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(1, 3, 2);
+    mesh
+}
+
+fn paint_slide_layer(
+    ui: &egui::Ui,
+    canvas: Rect,
+    live: &LiveSlide,
+    scene: &Scene<'_>,
+    clip_rect: Rect,
+    opacity: f32,
+) {
     if !scene.clear_text {
+        if live.theme.backdrop == Backdrop::BottomGradient {
+            painter(ui, clip_rect, opacity).add(egui::Shape::mesh(bottom_gradient(
+                canvas,
+                &live.slide.text_rect,
+            )));
+        }
         let target = normalized_rect(canvas, &live.slide.text_rect);
         let scale = canvas.width() / 1920.0;
         let mut style = live.slide.text_style.clone();
@@ -295,37 +333,56 @@ fn paint_transition_layers(
     rect: Rect,
     kind: &Transition,
     progress: f32,
-    previous: Option<&LiveSlide>,
-    previous_blackout: bool,
-    previous_clear_text: bool,
-    previous_media_cleared: bool,
+    previous: &OutputState,
     previous_media: Option<&TextureHandle>,
-    next: Option<&LiveSlide>,
-    blackout: bool,
-    clear_text: bool,
-    media_cleared: bool,
+    next: &OutputState,
     media: Option<&TextureHandle>,
     images: &HashMap<PathBuf, TextureHandle>,
 ) {
     let t = progress.clamp(0.0, 1.0);
     let canvas = fitted(rect, Vec2::new(16.0, 9.0));
     let previous_scene = Scene {
-        live: previous,
-        blackout: previous_blackout,
-        clear_text: previous_clear_text,
-        media_cleared: previous_media_cleared,
+        live: previous.live.as_ref(),
+        blackout: previous.blackout,
+        clear_text: previous.clear_text,
+        media_cleared: previous.media_cleared,
+        background: previous.effective_background(),
+        empty_color: crate::style::BLACK,
         media: previous_media,
         images,
     };
     let next_scene = Scene {
-        live: next,
-        blackout,
-        clear_text,
-        media_cleared,
+        live: next.live.as_ref(),
+        blackout: next.blackout,
+        clear_text: next.clear_text,
+        media_cleared: next.media_cleared,
+        background: next.effective_background(),
+        empty_color: crate::style::BLACK,
         media,
         images,
     };
     painter(ui, rect, 1.0).rect_filled(rect, 0.0, crate::style::BLACK);
+    // Keep a shared video/PDF/still steady while only caption layers transition.
+    if !previous.blackout
+        && !next.blackout
+        && previous.media_cleared == next.media_cleared
+        && previous.effective_background() == next.effective_background()
+    {
+        paint_background(ui, canvas, &next_scene, rect, 1.0);
+        let (old_alpha, new_alpha, old_offset, new_offset) = transition_frame(kind, t);
+        for (scene, opacity, offset) in [
+            (&previous_scene, old_alpha, old_offset),
+            (&next_scene, new_alpha, new_offset),
+        ] {
+            if opacity > 0.0
+                && let Some(live) = scene.live
+            {
+                let delta = Vec2::new(canvas.width() * offset.x, canvas.height() * offset.y);
+                paint_slide_layer(ui, canvas.translate(delta), live, scene, canvas, opacity);
+            }
+        }
+        return;
+    }
     match kind {
         Transition::Fade { .. } => {
             paint_scene(ui, rect, &previous_scene, rect, 1.0, false);
@@ -394,15 +451,9 @@ pub fn paint_audience(
             rect,
             &transition.kind,
             progress,
-            transition.previous.live.as_ref(),
-            transition.previous.blackout,
-            transition.previous.clear_text,
-            transition.previous.media_cleared,
+            &transition.previous,
             transition.previous_media.as_ref(),
-            output.live.as_ref(),
-            output.blackout,
-            output.clear_text,
-            output.media_cleared,
+            output,
             media,
             images,
         );
@@ -412,6 +463,8 @@ pub fn paint_audience(
             blackout: output.blackout,
             clear_text: output.clear_text,
             media_cleared: output.media_cleared,
+            background: output.effective_background(),
+            empty_color: crate::style::BLACK,
             media,
             images,
         };
@@ -483,6 +536,8 @@ pub fn paint_preview(
         blackout: false,
         clear_text: false,
         media_cleared: false,
+        background: live.map(|l| &l.slide.background),
+        empty_color: crate::style::CANVAS,
         media,
         images,
     };
@@ -508,6 +563,8 @@ pub fn preview_frame_with_images(
         blackout,
         clear_text,
         media_cleared: false,
+        background: live.map(|l| &l.slide.background),
+        empty_color: crate::style::CANVAS,
         media,
         images,
     };
@@ -542,6 +599,106 @@ pub fn stage_text(ui: &mut egui::Ui, text: &str, size: f32, height: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bottom_gradient_covers_width_and_scales_with_canvas() {
+        for scale in [1.0, 0.25] {
+            let canvas =
+                Rect::from_min_size(Pos2::new(30.0, 40.0), Vec2::new(1920.0, 1080.0) * scale);
+            let text = lumen_core::Rect {
+                x: 0.06,
+                y: 0.60,
+                w: 0.88,
+                h: 0.34,
+            };
+            let mesh = bottom_gradient(canvas, &text);
+            assert_eq!(mesh.vertices.len(), 4);
+            assert_eq!(mesh.indices.len(), 6);
+            assert_eq!(mesh.vertices[0].pos.x, canvas.left());
+            assert_eq!(mesh.vertices[1].pos.x, canvas.right());
+            assert!(
+                (mesh.vertices[0].pos.y - (canvas.top() + 0.54 * canvas.height())).abs() < 0.01
+            );
+            assert_eq!(mesh.vertices[0].color.a(), 0);
+            assert_eq!(mesh.vertices[2].pos.y, canvas.bottom());
+            assert_eq!(mesh.vertices[2].color.a(), 217);
+            let low_text = lumen_core::Rect { y: 0.99, ..text };
+            let low_mesh = bottom_gradient(canvas, &low_text);
+            assert!(
+                (canvas.bottom() - low_mesh.vertices[0].pos.y) >= canvas.height() * 0.30 - 0.01
+            );
+        }
+    }
+
+    #[test]
+    fn caption_transitions_paint_shared_video_once_at_full_opacity() {
+        let mut project = Project::demo();
+        let doc = &mut project.documents[0];
+        doc.slides[0].background = Background::Video {
+            path: "service.mp4".into(),
+            looped: true,
+            muted: true,
+        };
+        doc.slides[1].background = Background::Solid([0, 0, 0, 0]);
+        let mut runtime = Runtime::default();
+        runtime
+            .trigger(
+                &project,
+                project.documents[0].id,
+                project.documents[0].slides[0].id,
+            )
+            .unwrap();
+        let mut previous = runtime.output.clone();
+        previous.live.as_mut().unwrap().slide.text.clear();
+        runtime
+            .trigger(
+                &project,
+                project.documents[0].id,
+                project.documents[0].slides[1].id,
+            )
+            .unwrap();
+        runtime.output.live.as_mut().unwrap().slide.text.clear();
+        for kind in [
+            Transition::Fade { millis: 500 },
+            Transition::FadeThroughBlack { millis: 500 },
+            Transition::Push {
+                millis: 500,
+                direction: PushDirection::Left,
+            },
+        ] {
+            let ctx = egui::Context::default();
+            let texture = ctx.load_texture(
+                "test-video",
+                egui::ColorImage::filled([16, 9], crate::style::WHITE),
+                egui::TextureOptions::LINEAR,
+            );
+            let frame = ctx.run(Default::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    paint_transition_layers(
+                        ui,
+                        Rect::from_min_size(Pos2::ZERO, Vec2::new(640.0, 360.0)),
+                        &kind,
+                        0.5,
+                        &previous,
+                        None,
+                        &runtime.output,
+                        Some(&texture),
+                        &HashMap::new(),
+                    );
+                });
+            });
+            let images: Vec<_> = frame
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Mesh(mesh) if mesh.texture_id == texture.id() => Some(mesh),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(images.len(), 1, "{kind:?}");
+            assert!(images[0].vertices.iter().all(|v| v.color.a() == 255));
+        }
+    }
 
     #[test]
     fn transition_layers_are_normalized_and_clamped() {

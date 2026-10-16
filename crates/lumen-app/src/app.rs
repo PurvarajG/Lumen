@@ -326,12 +326,7 @@ impl LumenApp {
             self.media.stop();
             return;
         }
-        let background = self
-            .runtime
-            .output
-            .live
-            .as_ref()
-            .map(|l| l.slide.background.clone());
+        let background = self.runtime.output.effective_background().cloned();
         if !self.media.background_requires_reload(background.as_ref()) {
             return;
         }
@@ -1427,7 +1422,7 @@ impl LumenApp {
         if self.show_help {
             egui::Window::new("Keyboard shortcuts").open(&mut self.show_help).show(ctx,|ui|{
             ui.label("Space / Right / Page Down: Next. Left / Page Up: Previous. Return: Go live.");
-            ui.label("F1 All · F2 Slide · F3 Media · F4 Props · F5 Audio · F6 Messages. B: Blackout.");
+            ui.label("F1 All · F2 Slide · F3 Media · F4 Overlays · F5 Audio · F6 Messages. B: Blackout.");
             ui.label("Cmd+F Search. Cmd+Z Undo. Cmd+Shift+Z Redo. Shortcuts pause while editing text.");
             ui.label("Running order: Cmd+Up / Cmd+Down move the selected item. Delete removes it from the order (not the library).");
         });

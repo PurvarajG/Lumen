@@ -4,7 +4,8 @@ use crate::{
     text::{gu_label, gu_selectable},
 };
 use lumen_core::{
-    Background, Document, LiveSlide, PlaylistItem, Project, Slide, TextAlign, Theme, VerticalAlign,
+    Backdrop, Background, Document, LiveSlide, PlaylistItem, Project, Slide, TextAlign, Theme,
+    VerticalAlign,
 };
 use lumen_library::{
     Book, DownloadEvent, DownloadHandle, Downloader, SearchIndex, SlideOpts, Unit, catalog,
@@ -60,78 +61,97 @@ fn source_key(book: &Book, unit: &Unit) -> String {
         serde_json::to_string(&(&book.id, &unit.key)).expect("string pair")
     )
 }
-fn scripture_theme() -> Theme {
+fn caption_theme() -> Theme {
     Theme {
-        name: "Scripture".into(),
-        font_size: 54.0,
-        text_color: style::TEXT.to_array(),
-        background_color: style::CANVAS.to_array(),
+        name: "Caption".into(),
+        font_size: 42.0,
+        text_color: style::WHITE.to_array(),
+        background_color: [0, 0, 0, 0],
         align: TextAlign::Center,
-        vertical_align: VerticalAlign::Middle,
+        vertical_align: VerticalAlign::Bottom,
+        backdrop: Backdrop::BottomGradient,
         ..Default::default()
     }
 }
-fn unit_document(book: &Book, unit: &Unit, opts: SlideOpts, theme: Uuid) -> Document {
-    let title = unit.title_gu.as_deref().unwrap_or_default();
-    let mut doc =
-        Document::new(format!("{} {} {}", unit.label, title, source_key(book, unit)).trim());
-    // Track the same chunk packing as unit_slides so each footnote follows its block,
-    // including split paragraphs, without exposing it in audience text.
-    let limit = if opts.max_chars == 0 {
-        400
-    } else {
-        opts.max_chars
+fn caption_unit(unit: &Unit, lang: lumen_library::Lang, columns: usize) -> Unit {
+    let chunks = |text: Option<&str>| {
+        text.map_or_else(Vec::new, |text| lumen_core::caption_chunks(text, columns))
     };
-    let mut notes = Vec::new();
-    let mut current_notes = Vec::new();
-    let mut count = 0;
-    let mut length = 0;
+    let mut caption = unit.clone();
+    caption.blocks.clear();
     for block in &unit.blocks {
-        let single = Unit {
-            key: String::new(),
-            label: unit.label.clone(),
-            title_gu: None,
-            title_en: None,
-            blocks: vec![block.clone()],
+        let gu = chunks(block.gu.as_deref());
+        let en = chunks(block.en.as_deref());
+        let translit = chunks(block.translit.as_deref());
+        let count = match lang {
+            lumen_library::Lang::Gu => [&gu, &translit, &en]
+                .into_iter()
+                .find(|parts| !parts.is_empty())
+                .map_or(0, |parts| parts.len()),
+            lumen_library::Lang::En => [&en, &translit, &gu]
+                .into_iter()
+                .find(|parts| !parts.is_empty())
+                .map_or(0, |parts| parts.len()),
+            lumen_library::Lang::Both => {
+                if gu.is_empty() && en.is_empty() {
+                    translit.len()
+                } else {
+                    gu.len().max(en.len())
+                }
+            }
         };
-        for (_, text) in unit_slides(
-            &single,
-            SlideOpts {
-                blocks_per_slide: 1,
-                ..opts
-            },
-        ) {
-            let size: usize = lumen_core::markup::parse_markup(&text)
-                .iter()
-                .map(|s| s.text.chars().count())
-                .sum();
-            let separator = if count == 0 { 0 } else { 2 };
-            if count > 0
-                && (count >= opts.blocks_per_slide.clamp(1, 4) || length + separator + size > limit)
-            {
-                notes.push(current_notes.join("\n\n"));
-                current_notes.clear();
-                count = 0;
-                length = 0;
-            }
-            if let Some(note) = block.notes.as_ref().filter(|n| !n.trim().is_empty())
-                && !current_notes.contains(note)
-            {
-                current_notes.push(note.clone());
-            }
-            length += size + separator;
-            count += 1;
+        for index in 0..count {
+            let mut part = block.clone();
+            part.gu = gu.get(index).cloned();
+            part.en = en.get(index).cloned();
+            part.translit = translit.get(index).cloned();
+            caption.blocks.push(part);
         }
     }
-    if count > 0 {
-        notes.push(current_notes.join("\n\n"));
-    }
-    for ((label, text), notes) in unit_slides(unit, opts).into_iter().zip(notes) {
+    caption
+}
+
+fn unit_document(book: &Book, unit: &Unit, opts: SlideOpts, theme: Uuid) -> Document {
+    let columns = if opts.max_chars == 0 {
+        58
+    } else {
+        opts.max_chars.min(58)
+    };
+    let unit = caption_unit(unit, opts.lang, columns);
+    let title = unit.title_gu.as_deref().unwrap_or_default();
+    let mut doc =
+        Document::new(format!("{} {} {}", unit.label, title, source_key(book, &unit)).trim());
+    for block in &unit.blocks {
+        let text = match opts.lang {
+            lumen_library::Lang::Gu => block
+                .gu
+                .clone()
+                .or_else(|| block.translit.clone())
+                .or_else(|| block.en.clone()),
+            lumen_library::Lang::En => block
+                .en
+                .clone()
+                .or_else(|| block.translit.clone())
+                .or_else(|| block.gu.clone()),
+            lumen_library::Lang::Both => match (&block.gu, &block.en) {
+                (Some(gu), Some(en)) => Some(format!("{gu}\n\n{en}")),
+                (Some(text), None) | (None, Some(text)) => Some(text.clone()),
+                (None, None) => block.translit.clone(),
+            },
+        };
+        let Some(text) = text else { continue };
         let mut slide = Slide::new(theme);
-        slide.label = label;
-        slide.text = text;
-        slide.notes = notes;
-        slide.background = Background::Solid(style::CANVAS.to_array());
+        slide.label = unit.label.clone();
+        slide.text = lumen_core::markup::escape_markup(&text);
+        slide.notes = block.notes.clone().unwrap_or_default();
+        slide.background = Background::Solid([0, 0, 0, 0]);
+        slide.text_rect = lumen_core::Rect {
+            x: 0.06,
+            y: 0.60,
+            w: 0.88,
+            h: 0.34,
+        };
+        slide.text_style.shadow = true;
         doc.slides.push(slide);
     }
     doc
@@ -141,10 +161,10 @@ fn add_unit(project: &mut Project, book: &Book, unit: &Unit, opts: SlideOpts) ->
     if let Some(doc) = project.documents.iter().find(|d| d.name.ends_with(&key)) {
         return (doc.id, false);
     }
-    let theme = if let Some(t) = project.themes.iter().find(|t| t.name == "Scripture") {
+    let theme = if let Some(t) = project.themes.iter().find(|t| t.name == "Caption") {
         t.id
     } else {
-        let t = scripture_theme();
+        let t = caption_theme();
         let id = t.id;
         project.themes.push(t);
         id
@@ -1102,12 +1122,7 @@ pub fn preview_panel(app: &mut LumenApp, ui: &mut egui::Ui) -> bool {
                 }
             });
     });
-    ui.horizontal(|ui| {
-        ui.label("Blocks per slide");
-        changed |= ui
-            .add(egui::DragValue::new(&mut app.settings.book_blocks_per_slide).range(1..=4))
-            .changed();
-    });
+    ui.small("Captions use up to three lines per language.");
     if changed {
         app.books.preview_slide = 0;
         app.books.preview_doc = None;
@@ -1121,7 +1136,13 @@ pub fn preview_panel(app: &mut LumenApp, ui: &mut egui::Ui) -> bool {
             *lang != app.settings.book_language || *count != app.settings.book_blocks_per_slide
         })
     {
-        let theme = scripture_theme();
+        let theme = app
+            .project
+            .themes
+            .iter()
+            .find(|t| t.name == "Caption")
+            .cloned()
+            .unwrap_or_else(caption_theme);
         let (book, unit) = app.books.selected_unit().expect("selected unit");
         let doc = unit_document(book, unit, options(app), theme.id);
         app.books.preview_doc = Some((
@@ -1258,6 +1279,119 @@ mod tests {
         }
     }
     #[test]
+    fn caption_stanzas_keep_at_most_three_lines_per_language_and_all_notes() {
+        let mut book = fixture();
+        let block = &mut book.units[0].blocks[0];
+        block.kind = BlockKind::Stanza;
+        block.gu = Some(
+            (1..=8)
+                .map(|i| format!("ગુજરાતી {i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        block.en = Some(
+            (1..=8)
+                .map(|i| format!("English {i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        let doc = unit_document(
+            &book,
+            &book.units[0],
+            SlideOpts {
+                blocks_per_slide: 4,
+                ..Default::default()
+            },
+            Uuid::new_v4(),
+        );
+        assert_eq!(doc.slides.len(), 3);
+        for slide in &doc.slides {
+            let languages = slide.text.split("\n\n").collect::<Vec<_>>();
+            assert_eq!(languages.len(), 2);
+            assert!(languages.iter().all(|s| s.lines().count() <= 3));
+            assert_eq!(slide.notes, "Synthetic footnote");
+        }
+        let gu = doc
+            .slides
+            .iter()
+            .map(|s| s.text.split("\n\n").next().unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(gu, book.units[0].blocks[0].gu.as_deref().unwrap());
+    }
+
+    #[test]
+    fn caption_splitting_respects_language_selection_and_legacy_documents() {
+        let mut book = fixture();
+        book.units[0].blocks[0].en = Some("English\nsecond\nthird\nfourth".into());
+        let opts = SlideOpts {
+            lang: lumen_library::Lang::Gu,
+            ..Default::default()
+        };
+        let doc = unit_document(&book, &book.units[0], opts, Uuid::new_v4());
+        assert_eq!(doc.slides.len(), 1);
+        assert_eq!(doc.slides[0].text, "કસોટી");
+        let mut p = project();
+        let mut legacy = doc;
+        legacy.slides[0].background = Background::Solid([40, 30, 20, 255]);
+        p.documents.push(legacy.clone());
+        let (_, added) = add_unit(&mut p, &book, &book.units[0], opts);
+        assert!(!added);
+        assert_eq!(p.documents[0], legacy);
+        assert_eq!(p.themes.len(), 1);
+    }
+
+    #[test]
+    fn full_caption_chunks_keep_both_languages_paired() {
+        let mut book = fixture();
+        book.units[0].blocks[0].gu =
+            Some(vec!["ગુજરાતી શબ્દો ".repeat(3).trim().to_owned(); 3].join("\n"));
+        book.units[0].blocks[0].en =
+            Some(vec!["English words ".repeat(3).trim().to_owned(); 3].join("\n"));
+        let doc = unit_document(&book, &book.units[0], SlideOpts::default(), Uuid::new_v4());
+        assert_eq!(doc.slides.len(), 1);
+        let languages = doc.slides[0].text.split("\n\n").collect::<Vec<_>>();
+        assert_eq!(languages.len(), 2);
+        assert_eq!(languages[0], book.units[0].blocks[0].gu.as_deref().unwrap());
+        assert_eq!(languages[1], book.units[0].blocks[0].en.as_deref().unwrap());
+    }
+
+    #[test]
+    fn new_books_use_shared_caption_theme_without_changing_existing_documents() {
+        let mut project = project();
+        let mut book = fixture();
+        let (old_id, _) = add_unit(&mut project, &book, &book.units[0], SlideOpts::default());
+        let old_doc = project.document(old_id).unwrap().clone();
+        let theme = project.themes.iter().find(|t| t.name == "Caption").unwrap();
+        assert_eq!(theme.vertical_align, VerticalAlign::Bottom);
+        assert_eq!(theme.backdrop, lumen_core::Backdrop::BottomGradient);
+        assert_eq!(theme.background_color[3], 0);
+        assert_eq!(theme.text_color, style::WHITE.to_array());
+        let theme_id = theme.id;
+        for slide in &old_doc.slides {
+            assert!(slide.background.is_transparent());
+            assert!(slide.text_rect.y >= 0.59);
+            assert!(slide.text_rect.h <= 0.35);
+            assert!(slide.text_style.shadow);
+        }
+        book.units[0].key = "two".into();
+        let (new_id, _) = add_unit(&mut project, &book, &book.units[0], SlideOpts::default());
+        assert_eq!(project.document(old_id), Some(&old_doc));
+        assert_eq!(
+            project.document(new_id).unwrap().slides[0].theme_id,
+            theme_id
+        );
+        assert_eq!(
+            project
+                .themes
+                .iter()
+                .filter(|t| t.name == "Caption")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn saved_download_queue_restarts_active_before_pending() {
         let mut queue = DownloadQueue::default();
         queue.enqueue("vato");
@@ -1287,13 +1421,25 @@ mod tests {
                     blocks_per_slide: count,
                     max_chars,
                 };
-                let expected = unit_slides(&book.units[0], opts);
+                let expected: String = book.units[0]
+                    .blocks
+                    .iter()
+                    .filter_map(|b| b.en.as_deref())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
                 let doc = unit_document(&book, &book.units[0], opts, Uuid::new_v4());
                 assert_eq!(
                     doc.slides
                         .iter()
-                        .map(|s| (s.label.clone(), s.text.clone()))
-                        .collect::<Vec<_>>(),
+                        .map(|s| lumen_core::markup::strip_markup(&s.text))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" "),
                     expected
                 );
                 assert!(doc.slides.iter().all(|s| !s.notes.is_empty()));
@@ -1399,7 +1545,7 @@ mod tests {
             project
                 .themes
                 .iter()
-                .filter(|t| t.name == "Scripture")
+                .filter(|t| t.name == "Caption")
                 .count(),
             1
         );

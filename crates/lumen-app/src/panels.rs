@@ -737,7 +737,7 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
                 (1, "All"),
                 (2, "Slide"),
                 (3, "Media"),
-                (4, "Props"),
+                (4, "Overlays"),
                 (5, "Audio"),
                 (6, "Messages"),
             ] {
@@ -767,10 +767,12 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
     });
     ui.separator();
     if !app.present {
-        if let Some(mut selected) = app.selected_live() {
-            egui::ScrollArea::vertical()
-                .id_salt("slide-inspector")
-                .show(ui, |ui| {
+        let mut selected = app.selected_live();
+        let mut changed = false;
+        egui::ScrollArea::vertical()
+            .id_salt("slide-inspector")
+            .show(ui, |ui| {
+                if let Some(selected) = selected.as_mut() {
                     ui.horizontal(|ui| {
                         if ui.button("Choose image…").clicked() {
                             app.choose_media(selected.slide.id, false);
@@ -779,21 +781,31 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
                             app.choose_media(selected.slide.id, true);
                         }
                     });
-                    crate::inspector::slide(ui, &mut selected.slide, &app.project);
+                    changed |= crate::inspector::slide(ui, &mut selected.slide, &mut app.project);
+                }
+                ui.collapsing("Overlays", |ui| {
+                    changed |= crate::tools::props(ui, &mut app.project, &mut app.runtime);
                 });
-            if let Some(d) = app
+            });
+        if let Some(selected) = selected
+            && let Some(d) = app
                 .project
                 .documents
                 .iter_mut()
                 .find(|d| d.id == selected.document_id)
-                && let Some(s) = d.slides.iter_mut().find(|s| s.id == selected.slide.id)
-            {
-                *s = selected.slide;
-            }
+            && let Some(s) = d.slides.iter_mut().find(|s| s.id == selected.slide.id)
+        {
+            *s = selected.slide;
+        }
+        if changed {
+            app.mark();
         }
         return;
     }
     tool_tabs(ui, &mut app.tool_tab);
+    if app.tool_tab != 2 {
+        crate::tools::overlay_chips(ui, &app.project, &mut app.runtime);
+    }
     egui::ScrollArea::vertical()
         .id_salt("tools")
         .show(ui, |ui| {
@@ -806,7 +818,9 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
                     crate::tools::messages(ui, &mut app.project, &mut app.runtime, now);
                 }
                 2 => {
-                    crate::tools::props(ui, &mut app.project, &mut app.runtime);
+                    if crate::tools::props(ui, &mut app.project, &mut app.runtime) {
+                        app.mark();
+                    }
                 }
                 3 => {
                     app.audio.ui(ui);
@@ -832,7 +846,7 @@ fn tool_tabs(ui: &mut egui::Ui, tab: &mut usize) -> egui::InnerResponse<()> {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
         ui.spacing_mut().button_padding = egui::vec2(5.0, 4.0);
-        for (i, name) in ["Timers", "Messages", "Props", "Audio", "Stage"]
+        for (i, name) in ["Timers", "Messages", "Overlays", "Audio", "Stage"]
             .iter()
             .enumerate()
         {
