@@ -9,6 +9,7 @@ name = "lumen"
 path = "src/main.rs"
 
 [dependencies]
+lumen-library = { path = "../lumen-library" }
 lumen-core = { path = "../lumen-core" }
 lumen-text = { path = "../lumen-text" }
 lumen-media = { path = "../lumen-media" }

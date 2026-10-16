@@ -90,7 +90,8 @@ pub struct LumenApp {
     pub(super) present: bool,
     pub(super) search: String,
     pub(super) focus_search: bool,
-    pub(super) library_tab: bool,
+    pub(super) library_tab: usize,
+    pub(super) books: crate::books::Books,
     pub(super) tool_tab: usize,
     pub(super) settings: crate::settings::Settings,
     settings_notice: Option<String>,
@@ -191,7 +192,8 @@ impl LumenApp {
             present: true,
             search: String::new(),
             focus_search: false,
-            library_tab: false,
+            library_tab: 0,
+            books: crate::books::Books::new(&cc.egui_ctx, &settings.book_downloads),
             tool_tab: 0,
             settings,
             settings_notice: loaded.and_then(|v| v.notice),
@@ -764,6 +766,7 @@ impl LumenApp {
         }
     }
     fn shortcuts(&mut self, ctx: &Context) {
+        crate::books::shortcuts(self, ctx, self.modal);
         let typing = ctx.wants_keyboard_input() || self.modal;
         let events = ctx.input(|i| i.events.clone());
         for event in events {
@@ -889,6 +892,7 @@ impl eframe::App for LumenApp {
         let before = self.project.clone();
         self.history_applied = false;
         self.poll_files();
+        crate::books::poll(self, ctx);
         self.thumbnails.poll(ctx);
         let events = self
             .remote

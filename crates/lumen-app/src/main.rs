@@ -1,5 +1,6 @@
 mod app;
 mod audio;
+mod books;
 mod displays;
 mod file;
 mod inspector;

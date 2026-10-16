@@ -2158,6 +2158,7 @@ dependencies = [
  "lumen-control",
  "lumen-core",
  "lumen-interchange",
+ "lumen-library",
  "lumen-media",
  "lumen-text",
  "objc2 0.5.3",

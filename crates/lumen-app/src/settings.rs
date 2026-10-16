@@ -29,9 +29,38 @@ impl Default for StageOptions {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BookLanguage {
+    Gujarati,
+    English,
+    #[default]
+    Both,
+}
+impl BookLanguage {
+    pub const ALL: [Self; 3] = [Self::Gujarati, Self::English, Self::Both];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Gujarati => "Gujarati",
+            Self::English => "English",
+            Self::Both => "Both",
+        }
+    }
+    pub fn lang(self) -> lumen_library::Lang {
+        match self {
+            Self::Gujarati => lumen_library::Lang::Gu,
+            Self::English => lumen_library::Lang::En,
+            Self::Both => lumen_library::Lang::Both,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub book_language: BookLanguage,
+    pub book_blocks_per_slide: usize,
+    pub books_note_seen: bool,
+    pub book_downloads: Vec<String>,
     pub http_enabled: bool,
     pub http_addr: String,
     pub http_token: String,
@@ -53,6 +82,10 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            book_language: BookLanguage::Both,
+            book_blocks_per_slide: 1,
+            books_note_seen: false,
+            book_downloads: Vec::new(),
             http_enabled: false,
             http_addr: "127.0.0.1:47800".into(),
             http_token: generate_token(),
@@ -347,6 +380,16 @@ pub fn settings_panel(
         action.restart_requested = true;
     }
     ui.add_space(16.0);
+    ui.label("Book language");
+    egui::ComboBox::from_id_salt("default-book-language")
+        .selected_text(settings.book_language.label())
+        .show_ui(ui, |ui| {
+            for lang in BookLanguage::ALL {
+                action.changed |= ui
+                    .selectable_value(&mut settings.book_language, lang, lang.label())
+                    .changed();
+            }
+        });
     action.changed |= stage_options(ui, &mut settings.stage, project);
     if let Err(error) = settings.validate() {
         ui.add_space(6.0);

@@ -183,7 +183,16 @@ pub fn gu_label(ui: &mut Ui, text: &str, size: f32) -> Response {
 }
 pub fn gu_selectable(ui: &mut Ui, selected: bool, text: &str, size: f32) -> Response {
     if !contains_gujarati(text) {
-        return ui.selectable_label(selected, egui::RichText::new(text).size(size));
+        return ui
+            .add_sized(
+                [ui.available_width(), crate::style::CONTROL],
+                egui::Button::selectable(
+                    selected,
+                    (egui::RichText::new(text).size(size), egui::Atom::grow()),
+                )
+                .truncate(),
+            )
+            .on_hover_text(text);
     }
     shaped_label(ui, text, size, true, selected)
 }
@@ -246,12 +255,12 @@ fn shaped_label(ui: &mut Ui, text: &str, size: f32, selectable: bool, selected: 
             align: TextAlign::Left,
             valign: VerticalAlign::Middle,
             line_height: 1.3,
-            shrink_to_fit: true,
+            shrink_to_fit: !selectable,
         },
         1.0,
         ui.clip_rect(),
     );
-    response
+    response.on_hover_text(text)
 }
 
 #[cfg(test)]
