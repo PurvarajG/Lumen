@@ -1,0 +1,17 @@
+[package]
+name = "lumen-library"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lumen-core = { path = "../lumen-core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+unicode-normalization = "0.1"
+scraper = "0.22"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[dev-dependencies]
+tempfile.workspace = true
