@@ -4,22 +4,20 @@ use lumen_core::{CueAction, Document, Macro, PlaylistItem, Project, Slide};
 use uuid::Uuid;
 
 pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
-    let response = ui.add(
-        egui::TextEdit::singleline(&mut app.search)
-            .id(egui::Id::new("search"))
-            .hint_text("Search names and slide text")
-            .desired_width(f32::INFINITY),
-    );
-    if app.focus_search {
-        response.request_focus();
-        app.focus_search = false;
+    if crate::books::search_field(app, ui) {
+        return;
     }
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut app.library_tab, false, "Running order");
-        ui.selectable_value(&mut app.library_tab, true, "Library");
+        ui.spacing_mut().button_padding.x = 5.0;
+        ui.selectable_value(&mut app.library_tab, 0, "Running order");
+        ui.selectable_value(&mut app.library_tab, 1, "Library");
+        ui.selectable_value(&mut app.library_tab, 2, "Books");
     });
-    let query = app.search.to_lowercase();
-    let docs: Vec<_> = if app.library_tab {
+    if app.library_tab == 2 {
+        crate::books::catalog_panel(app, ui);
+        return;
+    }
+    let docs: Vec<_> = if app.library_tab == 1 {
         app.project.documents.iter().map(|d| d.id).collect()
     } else {
         app.project.playlist.iter().map(|p| p.document_id).collect()
@@ -34,14 +32,6 @@ pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
                 let Some(doc) = app.project.document(*id).cloned() else {
                     continue;
                 };
-                if !doc.name.to_lowercase().contains(&query)
-                    && !doc.slides.iter().any(|s| {
-                        s.text.to_lowercase().contains(&query)
-                            || s.label.to_lowercase().contains(&query)
-                    })
-                {
-                    continue;
-                }
                 shown += 1;
                 ui.push_id(index, |ui| {
                     let on_deck = next.as_ref().is_some_and(|n| n.document_id == *id);
@@ -51,19 +41,40 @@ pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
                         .live
                         .as_ref()
                         .is_some_and(|n| n.document_id == *id);
-                    let r = if crate::text::contains_gujarati(&doc.name) {
-                        crate::text::gu_selectable(
-                            ui,
-                            app.selected_doc == *id,
-                            &doc.name,
-                            style::BODY,
-                        )
-                    } else {
-                        ui.add_sized(
-                            [ui.available_width(), style::CONTROL],
-                            egui::Button::new(&doc.name).selected(app.selected_doc == *id),
-                        )
-                    };
+                    let r = ui
+                        .horizontal(|ui| {
+                            let state_width = 52.0;
+                            let width =
+                                (ui.available_width() - state_width - ui.spacing().item_spacing.x)
+                                    .max(40.0);
+                            let row = ui
+                                .allocate_ui_with_layout(
+                                    egui::vec2(width, style::CONTROL),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        crate::text::gu_selectable(
+                                            ui,
+                                            app.selected_doc == *id
+                                                && !crate::books::has_preview(app),
+                                            crate::books::document_label(&doc.name),
+                                            style::BODY,
+                                        )
+                                    },
+                                )
+                                .inner;
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if live {
+                                        ui.colored_label(style::LIVE, "LIVE");
+                                    } else {
+                                        ui.label(format!("{} cues", doc.slides.len()));
+                                    }
+                                },
+                            );
+                            row
+                        })
+                        .inner;
                     if on_deck {
                         ui.painter().rect_stroke(
                             r.rect.expand(2.0),
@@ -81,12 +92,16 @@ pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
                         );
                     }
                     if r.clicked() {
+                        crate::books::close_preview(app);
                         app.selected_doc = *id;
                         app.selected_slide = doc.slides.first().map(|s| s.id);
+                        if let Some(slide) = app.selected_slide {
+                            crate::books::remember_cue(app, *id, slide);
+                        }
                     }
-                    if app.selected_doc == *id && (!app.present || app.library_tab) {
+                    if app.selected_doc == *id && (!app.present || app.library_tab == 1) {
                         ui.horizontal(|ui| {
-                            if app.library_tab {
+                            if app.library_tab == 1 {
                                 if ui.small_button("Add to order").clicked()
                                     && append_playlist_item(&mut app.project, *id)
                                 {
@@ -119,20 +134,11 @@ pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
                             ui.text_edit_singleline(&mut d.name);
                         }
                     }
-                    ui.horizontal(|ui| {
-                        if live {
-                            ui.label(
-                                RichText::new("LIVE")
-                                    .color(style::WHITE)
-                                    .background_color(style::LIVE),
-                            );
-                        }
-                    });
                 });
             }
             if shown == 0 {
                 if docs.is_empty() {
-                    ui.label(if app.library_tab {
+                    ui.label(if app.library_tab == 1 {
                         "No documents yet — create or import a presentation."
                     } else {
                         "Running order is empty — add a document from Library."
@@ -205,6 +211,9 @@ fn append_playlist_item(project: &mut Project, document_id: Uuid) -> bool {
 }
 
 pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
+    if crate::books::preview_panel(app, ui) {
+        return;
+    }
     let Some(index) = app
         .project
         .documents
@@ -231,8 +240,7 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
     }
     ui.heading("Preview");
     let preview = app.selected_live();
-    let height = (ui.available_width() * 9.0 / 16.0)
-        .min((ui.available_height() - 280.0).clamp(120.0, 360.0));
+    let height = preview_height(ui.available_width(), ui.available_height());
     let texture = preview
         .as_ref()
         .and_then(|p| app.thumbnail(&p.slide.background));
@@ -248,13 +256,21 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
     if let Some(p) = &preview {
         crate::text::gu_label(
             ui,
-            &format!("{} / {}", p.document_name, p.slide.label),
+            &format!(
+                "{} / {}",
+                crate::books::document_label(&p.document_name),
+                p.slide.label
+            ),
             style::BODY,
         );
     }
     ui.small("Edits stay in preview until triggered.");
     ui.horizontal_wrapped(|ui| {
-        ui.heading(&app.project.documents[index].name);
+        crate::text::gu_label(
+            ui,
+            crate::books::document_label(&app.project.documents[index].name),
+            style::HEADING,
+        );
         if !app.present {
             if ui.button("Add slide").clicked()
                 && let Some(t) = app.project.themes.first()
@@ -384,6 +400,7 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
                             }
                             if r.clicked() {
                                 app.selected_slide = Some(slide.id);
+                                crate::books::remember_cue(app, app.selected_doc, slide.id);
                             }
                             if r.double_clicked() {
                                 app.trigger(app.selected_doc, slide.id);
@@ -420,6 +437,7 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
         .live
         .as_ref()
         .is_some_and(|live| live.document_id == app.selected_doc);
+    let book_preview = crate::books::has_preview(app);
     ui.horizontal(|ui| {
         if ui
             .add_sized(
@@ -433,11 +451,17 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
         if ui
             .add_sized(
                 [ui.available_width(), style::PRIMARY],
-                style::primary(transport_primary_label(live_in_document)),
+                style::primary(if book_preview {
+                    "Add and go live"
+                } else {
+                    transport_primary_label(live_in_document)
+                }),
             )
             .clicked()
         {
-            if live_in_document {
+            if book_preview {
+                crate::books::add_and_go_live(app);
+            } else if live_in_document {
                 app.navigate(true);
             } else if let Some(l) = app.selected_live() {
                 app.trigger(l.document_id, l.slide.id);
@@ -506,14 +530,7 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
         }
         return;
     }
-    ui.horizontal_wrapped(|ui| {
-        for (i, name) in ["Timers", "Messages", "Props", "Audio", "Stage"]
-            .iter()
-            .enumerate()
-        {
-            ui.selectable_value(&mut app.tool_tab, i, *name);
-        }
-    });
+    tool_tabs(ui, &mut app.tool_tab);
     egui::ScrollArea::vertical()
         .id_salt("tools")
         .show(ui, |ui| {
@@ -548,6 +565,19 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
         });
 }
 
+fn tool_tabs(ui: &mut egui::Ui, tab: &mut usize) -> egui::InnerResponse<()> {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        ui.spacing_mut().button_padding = egui::vec2(5.0, 4.0);
+        for (i, name) in ["Timers", "Messages", "Props", "Audio", "Stage"]
+            .iter()
+            .enumerate()
+        {
+            ui.selectable_value(tab, i, *name);
+        }
+    })
+}
+
 fn transport_primary_label(live_in_document: bool) -> &'static str {
     if live_in_document { "Next" } else { "Go live" }
 }
@@ -560,6 +590,12 @@ fn grid_layout(available: f32, gap: f32) -> (usize, f32) {
     )
 }
 
+// Reserve one thumbnail row, its label and document controls below the preview.
+pub fn preview_height(width: f32, height: f32) -> f32 {
+    let (_, thumb_width) = grid_layout(width, style::GAP);
+    (width * 9.0 / 16.0).min((height - thumb_width * 9.0 / 16.0 - 122.0).max(80.0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -567,6 +603,42 @@ mod tests {
     fn transport_keeps_one_contextual_primary_label() {
         assert_eq!(transport_primary_label(false), "Go live");
         assert_eq!(transport_primary_label(true), "Next");
+    }
+    #[test]
+    fn all_five_tool_tabs_fit_one_row_at_minimum_column_width() {
+        let ctx = egui::Context::default();
+        style::install(&ctx);
+        for width in [306.0, 336.0] {
+            let mut rect = egui::Rect::NOTHING;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 200.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE)
+                        .show(ctx, |ui| {
+                            rect = tool_tabs(ui, &mut 0).response.rect;
+                        });
+                },
+            );
+            assert!(rect.width() <= width, "tabs overflow {width}: {rect:?}");
+            assert!(rect.height() <= style::CONTROL + 1.0, "tabs wrap: {rect:?}");
+        }
+    }
+    #[test]
+    fn preview_fills_small_console_and_reserves_one_grid_row() {
+        let width = 1100.0 - style::LEFT_WIDTH - style::RIGHT_WIDTH - 48.0;
+        let height = 700.0 - 130.0;
+        assert!((preview_height(width, height) * 16.0 / 9.0 - width).abs() < 0.1);
+        for width in [width, 700.0, 1100.0] {
+            let (_, thumb) = grid_layout(width, style::GAP);
+            assert!(preview_height(width, height) + thumb * 9.0 / 16.0 + 122.0 <= height + 0.1);
+        }
     }
     #[test]
     fn grid_fits_width_without_overflow() {

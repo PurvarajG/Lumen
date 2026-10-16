@@ -134,6 +134,7 @@ pub struct TextRenderer {
     cache_bytes: usize,
     cache_budget: usize,
     gujarati_face: &'static str,
+    gujarati_scale: f32,
     #[cfg(test)]
     face_names: HashMap<cosmic_text::fontdb::ID, String>,
 }
@@ -169,6 +170,7 @@ impl TextRenderer {
         } else {
             "Noto Sans Gujarati"
         };
+        let gujarati_scale = measured_gujarati_scale(&db, gujarati_face);
         #[cfg(test)]
         let face_names = db
             .faces()
@@ -191,6 +193,7 @@ impl TextRenderer {
             cache_bytes: 0,
             cache_budget,
             gujarati_face,
+            gujarati_scale,
             #[cfg(test)]
             face_names,
         }
@@ -321,7 +324,7 @@ impl TextRenderer {
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(font_px, line_px));
         buffer.set_size(Some(req.width_px as f32), None);
         buffer.set_wrap(Wrap::WordOrGlyph);
-        let spans = styled_runs(req, self.gujarati_face);
+        let spans = styled_runs(req, self.gujarati_face, font_px, self.gujarati_scale);
         let default = Attrs::new().family(Family::Name("Poppins"));
         buffer.set_rich_text(
             spans,
@@ -371,6 +374,32 @@ impl TextRenderer {
             }
         }
         report
+    }
+}
+
+// Gujarati has no Latin x-height; measure the unmarked consonant body instead.
+fn measured_gujarati_scale(db: &cosmic_text::fontdb::Database, family: &str) -> f32 {
+    use cosmic_text::skrifa::{
+        FontRef, MetadataProvider,
+        instance::{LocationRef, Size},
+    };
+    let height = |name: &str, ch: char| -> Option<f32> {
+        let id = db.query(&cosmic_text::fontdb::Query {
+            families: &[cosmic_text::fontdb::Family::Name(name)],
+            ..Default::default()
+        })?;
+        db.with_face_data(id, |data, index| {
+            let font = FontRef::from_index(data, index).ok()?;
+            let glyph = font.charmap().map(ch)?;
+            let bounds = font
+                .glyph_metrics(Size::new(1.0), LocationRef::default())
+                .bounds(glyph)?;
+            Some(bounds.y_max - bounds.y_min)
+        })?
+    };
+    match (height("Poppins", 'x'), height(family, 'ક')) {
+        (Some(latin), Some(gujarati)) if gujarati > 0.0 => (latin / gujarati).clamp(1.0, 1.6),
+        _ => 1.0,
     }
 }
 
@@ -428,6 +457,8 @@ fn user_font_dir() -> Option<std::path::PathBuf> {
 fn styled_runs<'a>(
     req: &'a TextRequest<'_>,
     gujarati_face: &'static str,
+    font_px: f32,
+    gujarati_scale: f32,
 ) -> Vec<(&'a str, Attrs<'static>)> {
     let mut result = Vec::new();
     for span in req.spans {
@@ -439,6 +470,12 @@ fn styled_runs<'a>(
                 Weight::NORMAL
             };
             let mut attrs = Attrs::new().family(Family::Name(family)).weight(weight);
+            if gujarati {
+                attrs = attrs.metrics(Metrics::new(
+                    font_px * gujarati_scale,
+                    font_px * req.line_height,
+                ));
+            }
             if span.italic {
                 attrs = attrs.style(Style::Italic);
             }
@@ -1007,5 +1044,58 @@ mod tests {
             }
         }
         (min_x, min_y, max_x, max_y)
+    }
+}
+
+#[cfg(test)]
+mod gujarati_scale_tests {
+    use super::*;
+    use cosmic_text::skrifa::{
+        FontRef, MetadataProvider,
+        instance::{LocationRef, Size},
+    };
+
+    #[test]
+    fn mixed_line_matches_gujarati_body_to_latin_x_height() {
+        let mut renderer = TextRenderer::new();
+        assert!((1.0..=1.6).contains(&renderer.gujarati_scale));
+        let spans = lumen_core::markup::parse_markup("xક");
+        let request = TextRequest {
+            spans: &spans,
+            width_px: 800,
+            height_px: 200,
+            font_px: 80.0,
+            color: [255; 4],
+            outline: None,
+            shadow: false,
+            align: TextAlign::Left,
+            valign: VerticalAlign::Top,
+            line_height: 1.4,
+            shrink_to_fit: false,
+        };
+        let (_, _, buffer) = renderer.layout(&request);
+        let heights: Vec<f32> = buffer
+            .layout_runs()
+            .flat_map(|r| r.glyphs)
+            .map(|glyph| {
+                renderer
+                    .fonts
+                    .db()
+                    .with_face_data(glyph.font_id, |data, index| {
+                        let font = FontRef::from_index(data, index).unwrap();
+                        let bounds = font
+                            .glyph_metrics(Size::new(glyph.font_size), LocationRef::default())
+                            .bounds(cosmic_text::skrifa::GlyphId::new(u32::from(glyph.glyph_id)))
+                            .unwrap();
+                        bounds.y_max - bounds.y_min
+                    })
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(heights.len(), 2);
+        assert!(
+            (heights[1] / heights[0] - 1.0).abs() <= 0.10,
+            "mixed glyph heights: {heights:?}"
+        );
     }
 }
