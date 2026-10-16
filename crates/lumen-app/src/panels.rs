@@ -1,7 +1,8 @@
 use crate::{app::LumenApp, render};
 use eframe::egui::{self, Color32, Vec2};
 use lumen_core::{
-    Background, CueAction, Document, PlaylistItem, Project, Slide, TextAlign, VerticalAlign,
+    Background, CueAction, Document, PlaylistItem, Project, Slide, TextAlign, TimerKind,
+    VerticalAlign,
 };
 use uuid::Uuid;
 
@@ -396,7 +397,9 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
             app.runtime.output.clear_text = true;
         }
         if ui.button("Clear All").clicked() {
-            let _ = app.runtime.apply_actions(&[CueAction::ClearAll]);
+            let _ = app
+                .runtime
+                .apply_actions(&app.project, &[CueAction::ClearAll]);
             app.media.stop();
         }
     });
@@ -645,37 +648,53 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
 
 fn runtime_controls(app: &mut LumenApp, ui: &mut egui::Ui) {
     crate::style::section(ui, "Countdown clocks");
+    app.runtime.sync_timers(&app.project);
     let mut remove_timers = Vec::new();
-    for timer in &mut app.runtime.timers {
+    let mut actions = Vec::new();
+    let mut changed = false;
+    for timer in &mut app.project.timers {
+        let running = app
+            .runtime
+            .timer_states
+            .get(&timer.id)
+            .is_some_and(|state| state.running);
+        changed |= ui
+            .horizontal(|ui| {
+                let name_changed = ui
+                    .add(egui::TextEdit::singleline(&mut timer.name).desired_width(90.0))
+                    .changed();
+                ui.strong(app.runtime.timer_display(timer, 0));
+                name_changed
+            })
+            .inner;
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut timer.name).desired_width(90.0));
-            ui.strong(timer.display());
-        });
-        ui.horizontal(|ui| {
-            let mut duration = timer.duration_secs;
-            let duration_changed = ui
-                .add(
-                    egui::DragValue::new(&mut duration)
-                        .range(0.0_f64..=86400.0_f64)
-                        .suffix(" sec"),
-                )
-                .changed();
-            if duration_changed && !timer.running && duration.is_finite() {
-                timer.duration_secs = duration;
-                timer.remaining_secs = duration;
+            if let TimerKind::Countdown { duration_secs } = &mut timer.kind {
+                let mut duration = *duration_secs;
+                let duration_changed = ui
+                    .add(
+                        egui::DragValue::new(&mut duration)
+                            .range(0.0_f64..=86400.0_f64)
+                            .suffix(" sec"),
+                    )
+                    .changed();
+                if duration_changed && !running && duration.is_finite() {
+                    *duration_secs = duration;
+                    actions.push(CueAction::ResetTimer { id: timer.id });
+                    changed = true;
+                }
             }
             if ui
-                .small_button(if timer.running { "Pause" } else { "Start" })
+                .small_button(if running { "Pause" } else { "Start" })
                 .clicked()
             {
-                if timer.running {
-                    timer.pause();
+                if running {
+                    actions.push(CueAction::PauseTimer { id: timer.id });
                 } else {
-                    timer.start();
+                    actions.push(CueAction::StartTimer { id: timer.id });
                 }
             }
             if ui.small_button("Reset").clicked() {
-                timer.reset();
+                actions.push(CueAction::ResetTimer { id: timer.id });
             }
             if ui.small_button("Delete").clicked() {
                 remove_timers.push(timer.id);
@@ -683,9 +702,10 @@ fn runtime_controls(app: &mut LumenApp, ui: &mut egui::Ui) {
         });
     }
     if !remove_timers.is_empty() {
-        app.runtime
+        app.project
             .timers
             .retain(|timer| !remove_timers.contains(&timer.id));
+        changed = true;
     }
     ui.horizontal(|ui| {
         ui.add(
@@ -701,15 +721,30 @@ fn runtime_controls(app: &mut LumenApp, ui: &mut egui::Ui) {
         if ui.button("Add timer").clicked() {
             match parse_duration(&app.timer_duration_draft) {
                 Some(seconds) if !app.timer_name_draft.trim().is_empty() => {
-                    app.runtime
-                        .timers
-                        .push(lumen_core::Timer::new(app.timer_name_draft.trim(), seconds));
+                    app.project.timers.push(lumen_core::TimerDef {
+                        id: Uuid::new_v4(),
+                        name: app.timer_name_draft.trim().into(),
+                        kind: TimerKind::Countdown {
+                            duration_secs: seconds,
+                        },
+                        allow_overrun: false,
+                    });
+                    changed = true;
                     app.timer_error.clear();
                 }
                 _ => app.timer_error = "Enter a name and a duration from 0 to 24 hours.".into(),
             }
         }
     });
+    if changed {
+        app.mark();
+    }
+    if !actions.is_empty()
+        && let Err(error) = app.runtime.apply_actions(&app.project, &actions)
+    {
+        app.error = error.to_string();
+    }
+    app.runtime.sync_timers(&app.project);
     if !app.timer_error.is_empty() {
         ui.colored_label(Color32::from_rgb(238, 184, 92), &app.timer_error);
     }

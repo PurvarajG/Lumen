@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use crate::{CoreError, Project};
+use crate::{CoreError, Project, SCHEMA_VERSION};
 
 const MAX_PROJECT_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -61,9 +61,40 @@ pub fn load_project(path: &Path) -> Result<Project, CoreError> {
             maximum: MAX_PROJECT_BYTES,
         });
     }
-    let project: Project = serde_json::from_slice(&bytes)?;
+    let mut project: Project = serde_json::from_slice(&bytes)?;
+    migrate(&mut project)?;
     project.validate()?;
     Ok(project)
+}
+
+/// Migrate a project from v1 to v2 in memory.
+/// v1 projects get new fields as defaults and schema_version becomes 2.
+/// Versions > 2 or 0 error.
+fn migrate(project: &mut Project) -> Result<(), CoreError> {
+    match project.schema_version {
+        1 => {
+            // Migrate v1 → v2: new fields already have #[serde(default)]
+            // so they deserialized to defaults. Just bump the version.
+            project.schema_version = SCHEMA_VERSION;
+            // Seed a default countdown timer if none exist
+            if project.timers.is_empty() {
+                project.timers.push(crate::TimerDef {
+                    id: uuid::Uuid::new_v4(),
+                    name: "Countdown".into(),
+                    kind: crate::TimerKind::Countdown {
+                        duration_secs: 300.0,
+                    },
+                    allow_overrun: false,
+                });
+            }
+            Ok(())
+        }
+        v if v == SCHEMA_VERSION => Ok(()),
+        other => Err(CoreError::UnsupportedSchema {
+            found: other,
+            expected: SCHEMA_VERSION,
+        }),
+    }
 }
 
 fn io_error(operation: &str, source: std::io::Error) -> CoreError {

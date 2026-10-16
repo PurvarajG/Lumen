@@ -1,12 +1,15 @@
+pub mod history;
 mod import;
+pub mod markup;
 mod model;
 mod runtime;
 mod storage;
 
 pub use import::document_from_text;
 pub use model::{
-    Background, CoreError, CueAction, Document, Macro, PlaylistItem, Project, SCHEMA_VERSION,
-    Slide, TextAlign, Theme, Transition, VerticalAlign,
+    AudioCue, Background, CoreError, CueAction, Document, Macro, MessageTemplate, PlaylistItem,
+    Project, Prop, Rect, SCHEMA_VERSION, Slide, SlideObject, TextAlign, TextStyle, Theme, TimerDef,
+    TimerKind, Transition, VerticalAlign,
 };
-pub use runtime::{LiveSlide, OutputState, Runtime, Timer};
+pub use runtime::{LiveSlide, OutputState, Runtime, TimerState};
 pub use storage::{load_project, save_project};
