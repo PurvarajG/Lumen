@@ -19,7 +19,7 @@ Full ProPresenter parity is a long-term goal; see [the parity tracker](docs/PARI
 ### First Run & Operator Workflow
 - **Present Mode (Default):** Streamlined operator layout for live services.
   - **Left Sidebar:** Search across books, library, and playlists; tabs for running order, library cues, and downloaded scripture books.
-  - **Center:** Large preview of the selected ("on deck") cue with its saffron highlight, and the 16:9 cue grid with live status indicators.
+  - **Center:** Large preview of the selected ("up next") cue with its saffron highlight, and the 16:9 cue grid with live status indicators.
   - **Right Column:** Audience output monitor (what the congregation sees with a red LIVE indicator), live transport controls, and tabbed utilities (Timers, Messages, Props, Audio, Stage tools).
 - **Prepare Mode:** Swaps inspector tools for slide editing, object styling, typography, background media assignment, and transition configuration.
 - **Preview vs Live Isolation:** Selecting or editing a cue immediately updates the preview area without affecting live output. Pressing `Return` or clicking **Go live** triggers a cloned snapshot to the audience screen.
