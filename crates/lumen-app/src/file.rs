@@ -9,13 +9,23 @@ use std::{
 pub enum FileResult {
     Open(u64, Option<Result<(PathBuf, Project), String>>),
     Save(u64, Result<(PathBuf, Project), String>),
-    Import(Option<Result<(String, String), String>>),
+    Import(u64, Option<Result<lumen_interchange::ImportReport, String>>),
+    Export(Result<(), String>),
+    Recovery(
+        u64,
+        Option<PathBuf>,
+        Result<Option<crate::recovery::Recovered>, String>,
+    ),
+    Autosave(u64, u64, PathBuf, Result<(), String>),
     PickMedia(Option<PathBuf>, bool),
 }
 pub enum FileAction {
     Open(u64),
     Save(u64, PathBuf, Box<Project>),
-    Import,
+    Import(u64, uuid::Uuid),
+    Export(lumen_core::Document),
+    Recovery(u64, Option<PathBuf>),
+    Autosave(u64, u64, PathBuf, Box<Project>),
     PickMedia(bool),
 }
 
@@ -39,31 +49,35 @@ pub fn launch(action: FileAction, tx: Sender<FileResult>, repaint_ctx: Context) 
                     .map_err(|e| e.to_string());
                 let _ = tx.send(FileResult::Save(id, result));
             }
-            FileAction::Import => {
+            FileAction::Import(id, theme) => {
                 let result = rfd::FileDialog::new()
-                    .add_filter("Text", &["txt", "md"])
+                    .add_filter("Presentation", &["txt", "xml", "openlyrics", "pro"])
                     .pick_file()
-                    .map(|p| {
-                        let name = p
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("Imported text")
-                            .to_owned();
-                        use std::io::Read;
-                        let mut bytes = Vec::new();
-                        std::fs::File::open(p)
-                            .map_err(|e| e.to_string())?
-                            .take(4 * 1024 * 1024 + 1)
-                            .read_to_end(&mut bytes)
-                            .map_err(|e| e.to_string())?;
-                        if bytes.len() > 4 * 1024 * 1024 {
-                            return Err("Text import is limited to 4 MiB".into());
-                        }
-                        String::from_utf8(bytes)
-                            .map(|text| (name, text))
-                            .map_err(|e| format!("text file is not UTF-8: {e}"))
+                    .map(|path| {
+                        lumen_interchange::import_file(&path, theme).map_err(|e| e.to_string())
                     });
-                let _ = tx.send(FileResult::Import(result));
+                let _ = tx.send(FileResult::Import(id, result));
+            }
+            FileAction::Export(document) => {
+                let result = rfd::FileDialog::new()
+                    .add_filter("OpenLyrics", &["xml"])
+                    .set_file_name(format!("{}.xml", document.name))
+                    .save_file()
+                    .map(|path| {
+                        let xml = lumen_interchange::export_openlyrics(&document)
+                            .map_err(|e| e.to_string())?;
+                        std::fs::write(path, xml).map_err(|e| e.to_string())
+                    })
+                    .unwrap_or_else(|| Err("Export cancelled".into()));
+                let _ = tx.send(FileResult::Export(result));
+            }
+            FileAction::Recovery(id, path) => {
+                let result = crate::recovery::check(path.as_deref());
+                let _ = tx.send(FileResult::Recovery(id, path, result));
+            }
+            FileAction::Autosave(id, epoch, path, project) => {
+                let result = save_project(&path, &project).map_err(|e| e.to_string());
+                let _ = tx.send(FileResult::Autosave(id, epoch, path, result));
             }
             FileAction::PickMedia(video) => {
                 let result = if video {

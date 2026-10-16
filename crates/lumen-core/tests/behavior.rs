@@ -21,6 +21,7 @@ fn project_with_docs(docs: Vec<Document>, theme: Theme) -> Project {
                 duration_secs: 300.0,
             },
             allow_overrun: false,
+            warn_at_secs: None,
         }],
         props: vec![],
         messages: vec![],
@@ -219,6 +220,7 @@ fn timer_countdown_to_across_target() {
             second: 0,
         },
         allow_overrun: false,
+        warn_at_secs: None,
     };
 
     let mut p = Project::demo();
@@ -961,6 +963,7 @@ fn sync_timers_adds_new_and_drops_removed() {
         name: "Elapsed".into(),
         kind: TimerKind::Elapsed,
         allow_overrun: false,
+        warn_at_secs: None,
     });
     r.sync_timers(&p);
     assert_eq!(r.timer_states.len(), 2);

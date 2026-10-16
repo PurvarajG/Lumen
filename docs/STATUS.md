@@ -22,3 +22,8 @@ REA 6.5.0 and upstream source are local. Ghidra 12.1.4/OpenJDK21 doctor passed; 
 ## Remaining
 
 Full ProPresenter parity is not complete. PARITY.md tracks absent features. The next interchange milestone is designed but unimplemented: OpenLyrics plus explicitly experimental, text-only extraction from the observed ProPresenter fixture field paths. Rich layers, fades, undo/recovery, production audio/output adapters and service integrations remain future work. Do not advertise those as available.
+
+
+## B1 console executor (wave/b1-console, 2026-10-16)
+
+Uncommitted implementation in the B1 worktree; **blocked**, not a verified milestone. Core tests 69 passed and latest app suite 35 passed. Workspace tests stop at lumen-control `test_midi_ports_query` because CoreMIDI initialization fails on this host. Per executor instruction, stopped without modifying that out-of-scope crate. Final fmt check, clippy, smoke and native screenshots remain pending. Report: `/Users/purvarajsinhgohil/Developer/PROPRESENTER/.local/reports/b1-console.md`. Parent owns integration and commit; no git writes attempted.
