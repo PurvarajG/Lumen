@@ -176,6 +176,8 @@ pub struct Document {
     pub id: Uuid,
     pub name: String,
     pub slides: Vec<Slide>,
+    #[serde(default)]
+    pub source: Option<std::path::PathBuf>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -418,6 +420,7 @@ impl Document {
             id: Uuid::new_v4(),
             name: name.into(),
             slides: Vec::new(),
+            source: None,
         }
     }
 }

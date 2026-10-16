@@ -351,6 +351,7 @@ pub fn import_propresenter(
             id: Uuid::new_v4(),
             name: title,
             slides,
+            source: None,
         },
         warnings,
     })
