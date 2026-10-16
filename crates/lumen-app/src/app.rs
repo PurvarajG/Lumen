@@ -47,6 +47,10 @@ enum Pending {
 }
 pub struct LumenApp {
     pub project: Project,
+    pub text_images: crate::text::SharedText,
+    displays: Vec<crate::displays::DisplayInfo>,
+    identify_until: Option<Instant>,
+    last_display_scan: Instant,
     pub runtime: Runtime,
     pub selected_doc: Uuid,
     pub selected_slide: Option<Uuid>,
@@ -143,6 +147,10 @@ impl LumenApp {
             };
         let saved_project = project.clone();
         let mut app = Self {
+            text_images: crate::text::TextImages::install(&cc.egui_ctx),
+            displays: crate::displays::enumerate_displays(),
+            identify_until: None,
+            last_display_scan: Instant::now(),
             project,
             runtime: Runtime::default(),
             selected_doc,
@@ -154,8 +162,8 @@ impl LumenApp {
             media,
             show_audience: smoke,
             show_stage: smoke,
-            fullscreen_audience: false,
-            fullscreen_stage: false,
+            fullscreen_audience: settings.audience_fullscreen,
+            fullscreen_stage: settings.stage_fullscreen,
             published: Arc::new(Mutex::new(Published::default())),
             tx,
             rx,
@@ -174,8 +182,8 @@ impl LumenApp {
             allow_close: false,
             smoke_test: smoke,
             smoke_mode: smoke,
-            audience_fullscreen_state: Arc::new(AtomicBool::new(false)),
-            stage_fullscreen_state: Arc::new(AtomicBool::new(false)),
+            audience_fullscreen_state: Arc::new(AtomicBool::new(settings.audience_fullscreen)),
+            stage_fullscreen_state: Arc::new(AtomicBool::new(settings.stage_fullscreen)),
             audience_close_requested: Arc::new(AtomicBool::new(false)),
             stage_close_requested: Arc::new(AtomicBool::new(false)),
             repaint_ctx: cc.egui_ctx.clone(),
@@ -837,6 +845,9 @@ fn save_decision(
 
 impl eframe::App for LumenApp {
     fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+        if let Ok(mut cache) = self.text_images.lock() {
+            cache.begin_frame();
+        }
         let _ = frame;
         let closing = ctx.input(|i| i.viewport().close_requested());
         if closing && self.dirty && !self.allow_close {
@@ -897,7 +908,34 @@ impl eframe::App for LumenApp {
         self.runtime
             .tick(&self.project, now.saturating_duration_since(self.last_tick));
         self.last_tick = now;
-        self.fullscreen_audience = self.audience_fullscreen_state.load(Ordering::Relaxed);
+        if self.last_display_scan.elapsed().as_secs() >= 1 {
+            self.displays = crate::displays::enumerate_displays();
+            self.last_display_scan = Instant::now();
+        }
+        if self
+            .settings
+            .audience_display
+            .as_ref()
+            .is_some_and(|key| crate::displays::match_display(Some(key), &self.displays).is_none())
+            || self.settings.stage_display.as_ref().is_some_and(|key| {
+                crate::displays::match_display(Some(key), &self.displays).is_none()
+            })
+        {
+            self.status =
+                "Saved display is unavailable. Outputs use the primary display in a window.".into();
+        }
+        let audience_fullscreen = self.audience_fullscreen_state.load(Ordering::Relaxed);
+        let stage_fullscreen = self.stage_fullscreen_state.load(Ordering::Relaxed);
+        if (
+            self.settings.audience_fullscreen,
+            self.settings.stage_fullscreen,
+        ) != (audience_fullscreen, stage_fullscreen)
+        {
+            self.settings.audience_fullscreen = audience_fullscreen;
+            self.settings.stage_fullscreen = stage_fullscreen;
+            self.persist_settings();
+        }
+        self.fullscreen_audience = audience_fullscreen;
         self.fullscreen_stage = self.stage_fullscreen_state.load(Ordering::Relaxed);
         if consume_close_request(&self.audience_close_requested, &mut self.show_audience)
             && self.smoke_mode
@@ -927,6 +965,9 @@ impl eframe::App for LumenApp {
                 if self.show_settings {
                     if ui.button("Close settings").clicked() {
                         self.show_settings = false;
+                    }
+                    if let Ok(cache) = self.text_images.lock() {
+                        ui.label(cache.font_notice());
                     }
                     let action = crate::settings::settings_panel(
                         ui,
@@ -1045,9 +1086,9 @@ impl LumenApp {
         egui::TopBottomPanel::top("toolbar")
             .frame(crate::style::panel_frame())
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if self.present {
-                        ui.heading(&self.project.name);
+                        crate::text::gu_label(ui, &self.project.name, 20.0);
                     } else {
                         ui.text_edit_singleline(&mut self.project.name);
                     }
@@ -1058,12 +1099,16 @@ impl LumenApp {
                     for (name, open) in
                         [("Audience", self.show_audience), ("Stage", self.show_stage)]
                     {
-                        if ui
-                            .selectable_label(
-                                open,
-                                format!("{name}: {}", if open { "on" } else { "off" }),
-                            )
-                            .clicked()
+                        if output_pill(
+                            ui,
+                            name,
+                            if open {
+                                OutputStatus::On
+                            } else {
+                                OutputStatus::Off
+                            },
+                        )
+                        .clicked()
                         {
                             if name == "Audience" {
                                 set_output_open(
@@ -1087,21 +1132,18 @@ impl LumenApp {
                     } else {
                         "off"
                     };
-                    ui.colored_label(
-                        if remote == "error" {
-                            crate::style::WARN
-                        } else if remote == "on" {
-                            crate::style::OK
-                        } else {
-                            crate::style::TEXT_DIM
+                    output_pill(
+                        ui,
+                        "Remote",
+                        match remote {
+                            "error" => OutputStatus::Error,
+                            "on" => OutputStatus::On,
+                            _ => OutputStatus::Off,
                         },
-                        format!("Remote: {remote}"),
                     );
-                    ui.label(if self.dirty {
-                        "Unsaved changes"
-                    } else {
-                        "Saved"
-                    });
+                    if self.dirty {
+                        ui.label("Unsaved changes");
+                    }
                 });
                 ui.horizontal(|ui| {
                     ui.menu_button("File", |ui| {
@@ -1163,19 +1205,21 @@ impl LumenApp {
                         self.show_settings = !self.show_settings;
                     }
                     ui.menu_button("Outputs", |ui| {
-                        if ui
-                            .checkbox(&mut self.fullscreen_audience, "Audience fullscreen")
-                            .changed()
-                        {
+                        self.displays = crate::displays::enumerate_displays();
+                        let action =
+                            crate::displays::outputs_panel(ui, &mut self.settings, &self.displays);
+                        if action.changed {
+                            self.fullscreen_audience = self.settings.audience_fullscreen;
+                            self.fullscreen_stage = self.settings.stage_fullscreen;
                             self.audience_fullscreen_state
                                 .store(self.fullscreen_audience, Ordering::Relaxed);
-                        }
-                        if ui
-                            .checkbox(&mut self.fullscreen_stage, "Stage fullscreen")
-                            .changed()
-                        {
                             self.stage_fullscreen_state
                                 .store(self.fullscreen_stage, Ordering::Relaxed);
+                            self.persist_settings();
+                        }
+                        if action.identify {
+                            self.identify_until =
+                                Some(Instant::now() + std::time::Duration::from_secs(3));
                         }
                     });
                     if ui.button("Shortcuts").clicked() {
@@ -1270,6 +1314,14 @@ impl LumenApp {
         }
     }
     fn show_outputs(&mut self, ctx: &Context) {
+        if let Some(deadline) = self.identify_until {
+            crate::displays::show_identify(ctx, &self.displays, deadline);
+            if Instant::now() >= deadline {
+                self.identify_until = None;
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(80));
+            }
+        }
         let data = self.published.clone();
         if self.show_audience {
             let viewport_id = ViewportId::from_hash_of("audience");
@@ -1279,10 +1331,14 @@ impl LumenApp {
             let fullscreen_state = self.audience_fullscreen_state.clone();
             ctx.show_viewport_deferred(
                 viewport_id,
-                egui::ViewportBuilder::default()
-                    .with_title("Lumen - Audience")
-                    .with_inner_size([960.0, 540.0])
-                    .with_fullscreen(self.fullscreen_audience),
+                crate::displays::output_viewport_builder(
+                    "Lumen - Audience",
+                    [960.0, 540.0],
+                    self.settings.audience_display.as_ref(),
+                    &self.displays,
+                    self.fullscreen_audience,
+                )
+                .0,
                 move |ctx, _| {
                     let state = data.lock().map(|s| s.clone()).unwrap_or_default();
                     if state.media_animating
@@ -1330,10 +1386,14 @@ impl LumenApp {
             let fullscreen_state = self.stage_fullscreen_state.clone();
             ctx.show_viewport_deferred(
                 viewport_id,
-                egui::ViewportBuilder::default()
-                    .with_title("Lumen - Stage")
-                    .with_inner_size([700.0, 600.0])
-                    .with_fullscreen(self.fullscreen_stage),
+                crate::displays::output_viewport_builder(
+                    "Lumen - Stage",
+                    [700.0, 600.0],
+                    self.settings.stage_display.as_ref(),
+                    &self.displays,
+                    self.fullscreen_stage,
+                )
+                .0,
                 move |ctx, _| {
                     let state = data.lock().map(|s| s.clone()).unwrap_or_default();
                     if state.media_animating || state.runtime.timers.iter().any(|t| t.2) {
@@ -1350,40 +1410,48 @@ impl LumenApp {
                         }
                         if state.stage.current {
                             ui.colored_label(crate::style::LIVE, "Current");
-                            ui.heading(
+                            crate::render::stage_text(
+                                ui,
                                 state
                                     .output
                                     .live
                                     .as_ref()
                                     .map(|l| l.slide.text.as_str())
                                     .unwrap_or("No cue live"),
+                                28.0,
+                                150.0,
                             );
                         }
                         if state.stage.next {
                             ui.separator();
                             ui.label("Next");
-                            ui.heading(
+                            crate::render::stage_text(
+                                ui,
                                 state
                                     .project
                                     .next
                                     .as_ref()
                                     .map(|l| l.slide.text.as_str())
                                     .unwrap_or("End of running order"),
+                                24.0,
+                                120.0,
                             );
                         }
                         if state.stage.message {
                             ui.separator();
-                            ui.heading(&state.runtime.message);
+                            crate::render::stage_text(ui, &state.runtime.message, 24.0, 64.0);
                         }
                         if state.stage.notes {
                             ui.separator();
-                            ui.label(
+                            crate::text::gu_label(
+                                ui,
                                 state
                                     .output
                                     .live
                                     .as_ref()
                                     .map(|l| l.slide.notes.as_str())
                                     .unwrap_or(""),
+                                13.0,
                             );
                         }
                         if let Some(timer) = state
@@ -1614,6 +1682,13 @@ impl LumenApp {
             .flat_map(|d| &d.slides)
             .flat_map(|s| &s.objects)
             .chain(self.project.props.iter().flat_map(|p| &p.objects))
+            .chain(
+                self.runtime
+                    .output
+                    .prop_snapshots
+                    .iter()
+                    .flat_map(|p| &p.objects),
+            )
         {
             if let lumen_core::SlideObject::Image { path, .. } = object {
                 self.thumbnails.request(path);
@@ -1834,4 +1909,56 @@ fn recovery_is_obsolete(
     clean: bool,
 ) -> bool {
     epoch != current_epoch || autosave < saved || clean
+}
+
+#[derive(Clone, Copy)]
+enum OutputStatus {
+    Off,
+    On,
+    Error,
+}
+fn output_pill(ui: &mut egui::Ui, name: &str, status: OutputStatus) -> egui::Response {
+    let tint = match status {
+        OutputStatus::Off => crate::style::TEXT_DIM,
+        OutputStatus::On => crate::style::OK,
+        OutputStatus::Error => crate::style::LIVE,
+    };
+    let state = match status {
+        OutputStatus::Off => "off",
+        OutputStatus::On => "on",
+        OutputStatus::Error => "error",
+    };
+    let label = format!("{name} {state}");
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.clone(), egui::FontId::proportional(11.0), tint);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(galley.size().x + 30.0, 28.0),
+        egui::Sense::click(),
+    );
+    ui.painter().rect_stroke(
+        rect,
+        14.0,
+        egui::Stroke::new(1.0_f32, tint),
+        egui::StrokeKind::Inside,
+    );
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.expand(2.0),
+            14.0,
+            egui::Stroke::new(2.0_f32, crate::style::SAFFRON),
+            egui::StrokeKind::Inside,
+        );
+    }
+    ui.painter()
+        .circle_filled(egui::pos2(rect.left() + 10.0, rect.center().y), 3.0, tint);
+    ui.painter().galley(
+        egui::pos2(rect.left() + 19.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        tint,
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label.clone())
+    });
+    response
 }

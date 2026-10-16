@@ -28,3 +28,7 @@ Full ProPresenter parity is not complete. PARITY.md tracks absent features. The 
 ## B1 console executor (wave/b1-console, 2026-10-16)
 
 Uncommitted implementation in the B1 worktree; **blocked**, not a verified milestone. Core tests 69 passed and latest app suite 35 passed. Workspace tests stop at lumen-control `test_midi_ports_query` because CoreMIDI initialization fails on this host. Per executor instruction, stopped without modifying that out-of-scope crate. Final fmt check, clippy, smoke and native screenshots remain pending. Report: `/Users/purvarajsinhgohil/Developer/PROPRESENTER/.local/reports/b1-console.md`. Parent owns integration and commit; no git writes attempted.
+
+## C1 render executor (wave/c1-render, 2026-10-16)
+
+Uncommitted shaped rendering, live prop/message snapshots, console polish and display settings implemented; **blocked, not a verified milestone**. Workspace tests passed before final small edits. Clippy reports `items_after_test_module` for stage_text in render.rs; final fmt check/tests/clippy need rerunning. Required Quartz window enumeration returned None in the sandbox, preventing prescribed window-only captures; stopped per executor instruction. Native rendering and monitor behavior remain unverified. Consolidated report: `/Users/purvarajsinhgohil/Developer/PROPRESENTER/.local/reports/c1.md`. Parent owns review and commit; no git writes attempted.

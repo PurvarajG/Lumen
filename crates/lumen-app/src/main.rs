@@ -1,5 +1,6 @@
 mod app;
 mod audio;
+mod displays;
 mod file;
 mod inspector;
 #[cfg(target_os = "macos")]
@@ -13,6 +14,7 @@ mod render;
 mod settings;
 mod shortcuts;
 mod style;
+mod text;
 mod thumbnails;
 mod tools;
 
@@ -102,7 +104,7 @@ fn main() -> ExitCode {
     let native = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Lumen Presenter")
-            .with_inner_size([1500.0, 950.0])
+            .with_inner_size([1500.0, 982.0])
             .with_min_inner_size([1100.0, 700.0]),
         ..Default::default()
     };

@@ -68,6 +68,13 @@ pub fn install(ctx: &egui::Context) {
         .get_mut(&FontFamily::Proportional)
         .unwrap()
         .insert(0, "Poppins".into());
+    fonts.font_data.insert(
+        "Phosphor".into(),
+        FontData::from_static(include_bytes!("../assets/fonts/Phosphor.ttf")).into(),
+    );
+    fonts
+        .families
+        .insert(FontFamily::Name("Phosphor".into()), vec!["Phosphor".into()]);
     // Poppins has tabular-width figures; use it for timers rather than a system monospace.
     fonts
         .families
@@ -115,6 +122,8 @@ pub fn install(ctx: &egui::Context) {
     v.widgets.active.bg_fill = RAISED;
     v.widgets.active.weak_bg_fill = RAISED;
     v.widgets.active.bg_stroke = Stroke::new(2.0_f32, SAFFRON);
+    v.text_cursor.stroke = Stroke::new(2.0_f32, SAFFRON);
+    v.text_cursor.preview = true;
     ctx.set_visuals_of(egui::Theme::Dark, v);
 }
 
@@ -131,4 +140,8 @@ pub fn primary(text: &str) -> egui::Button<'_> {
         .fill(SAFFRON)
         .stroke(Stroke::NONE)
         .corner_radius(4)
+}
+
+pub fn icon(glyph: char, size: f32) -> RichText {
+    RichText::new(glyph.to_string()).font(FontId::new(size, FontFamily::Name("Phosphor".into())))
 }
