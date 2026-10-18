@@ -8,7 +8,7 @@ Full ProPresenter parity is a long-term goal; see [the parity tracker](docs/PARI
 
 ## Download
 
-**[Download Lumen Presenter 1.0.0-rc.5 for Mac (DMG)](https://github.com/PurvarajG/Lumen/releases/download/v1.0.0-rc.5/Lumen-Presenter-1.0.0-rc.5-macos-arm64.dmg)** · [all versions and release notes](https://github.com/PurvarajG/Lumen/releases)
+**[Download Lumen Presenter 1.0.0-rc.6 for Mac (DMG)](https://github.com/PurvarajG/Lumen/releases/download/v1.0.0-rc.6/Lumen-Presenter-1.0.0-rc.6-macos-arm64.dmg)** · [all versions and release notes](https://github.com/PurvarajG/Lumen/releases)
 
 - Needs a Mac with Apple Silicon (M1 or newer) running macOS 12 or later.
 - Video needs FFmpeg: `brew install ffmpeg`.
