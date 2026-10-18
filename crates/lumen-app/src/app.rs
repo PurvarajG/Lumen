@@ -1055,7 +1055,7 @@ impl eframe::App for LumenApp {
         self.toolbar(ctx);
         egui::SidePanel::left("library")
             .default_width(crate::style::LEFT_WIDTH)
-            .width_range(220.0..=310.0)
+            .width_range(240.0..=520.0)
             .resizable(true)
             .frame(crate::style::panel_frame())
             .show(ctx, |ui| crate::panels::library(self, ui));

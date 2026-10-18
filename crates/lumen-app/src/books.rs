@@ -771,7 +771,7 @@ pub fn shortcuts(app: &mut LumenApp, ctx: &egui::Context, modal: bool) {
 }
 
 pub fn search_field(app: &mut LumenApp, ui: &mut egui::Ui) -> bool {
-    ui.label("Search");
+    // The hint text names the field; a heading above it cost a row of the running order.
     let response = ui.add(
         egui::TextEdit::singleline(&mut app.search)
             .id(egui::Id::new("search"))

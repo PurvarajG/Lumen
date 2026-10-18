@@ -19,7 +19,7 @@ Mode: **Operate** (impeccable). Taste dials: DESIGN_VARIANCE 3, MOTION_INTENSITY
 Header row: project name · Prepare / Present segmented switch · output status pills (Audience, Stage, Remote) · Save state.
 
 Three regions:
-1. **Left rail (280 pt, resizable):** Search field on top (books + library + playlist, results grouped), then Running order (playlist) and Library tabs, then Books (downloaded anirdesh books) tab.
+1. **Left rail (300 pt, resizable 240–520):** Search field on top (books + library + playlist, results grouped), then Running order (playlist), Library and Books (downloaded anirdesh books) tabs. The running order takes the rail's full remaining height (12 rows at 1500×949); Macros sit in a collapsible header at the bottom, collapsed in Present and open in Prepare. "New document" is a Prepare-only action.
 2. **Centre:** large Preview of the selected/on-deck cue with its label, then the cue grid (16:9 thumbnails, width-aware columns, labels below, LIVE / on-deck states).
 3. **Right column (360 pt):** Live output monitor (what the audience sees, with a red LIVE caption), transport (Previous · Next / Go live: cue · Clear group), then tabbed tools: Timers · Messages · Props · Audio · Stage.
 

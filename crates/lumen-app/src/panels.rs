@@ -4,6 +4,8 @@ use lumen_core::{CueAction, Document, Macro, PlaylistItem, Project, Slide, Trans
 use uuid::Uuid;
 
 pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
+    // The rail is a dense list; 4 pt between its controls gives the running order the room.
+    ui.spacing_mut().item_spacing.y = style::GAP / 2.0;
     if crate::books::search_field(app, ui) {
         return;
     }
@@ -26,12 +28,23 @@ pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
     if order {
         add_header(app, ui, !docs.is_empty());
     }
+    // Macros stay one header tall in Present so the running order gets the rail's height.
+    // Each mode keeps its own open state, defaulting to open only in Prepare.
+    let macros_salt = ("macros", app.present);
+    let macros_open = egui::collapsing_header::CollapsingState::load_with_default_open(
+        ui.ctx(),
+        ui.make_persistent_id(egui::Id::new(macros_salt)),
+        !app.present,
+    )
+    .is_open();
+    let reserve = bottom_reserve(app.present, macros_open);
     if order && docs.is_empty() {
         empty_running_order(app, ui);
     } else {
-        document_rows(app, ui, &docs, order);
+        document_rows(app, ui, &docs, order, reserve);
     }
-    if ui.button("New document").clicked() {
+    // Present is for running the show; creating documents is editing.
+    if !app.present && ui.button("New document").clicked() {
         let mut doc = Document::new("New document");
         if let Some(t) = app.project.themes.first() {
             doc.slides.push(Slide::new(t.id));
@@ -44,7 +57,26 @@ pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
         app.mark();
     }
     ui.separator();
-    style::section(ui, "Macros");
+    egui::CollapsingHeader::new(RichText::new("Macros").size(style::HEADING).strong())
+        .id_salt(macros_salt)
+        .default_open(!app.present)
+        .show(ui, |ui| macros_body(app, ui));
+}
+
+/// Height kept below the running-order list for "New document" and the Macros header,
+/// or the open Macros list.
+fn bottom_reserve(present: bool, macros_open: bool) -> f32 {
+    let header = style::CONTROL + style::GAP;
+    let new_document = if present { 0.0 } else { header };
+    let separator = style::GAP;
+    if macros_open {
+        210.0
+    } else {
+        new_document + separator + header
+    }
+}
+
+fn macros_body(app: &mut LumenApp, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical()
         .id_salt("macros")
         .show(ui, |ui| {
@@ -83,6 +115,7 @@ pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
         });
 }
 const ROW_HEIGHT: f32 = 56.0;
+const ROW_GAP: f32 = 1.0;
 
 fn add_header(app: &mut LumenApp, ui: &mut egui::Ui, has_items: bool) {
     if has_items
@@ -145,7 +178,13 @@ fn empty_running_order(app: &mut LumenApp, ui: &mut egui::Ui) {
         });
 }
 
-fn document_rows(app: &mut LumenApp, ui: &mut egui::Ui, docs: &[Uuid], reorder: bool) {
+fn document_rows(
+    app: &mut LumenApp,
+    ui: &mut egui::Ui,
+    docs: &[Uuid],
+    reorder: bool,
+    reserve: f32,
+) {
     let next = app.runtime.peek_next(&app.project);
     let next_row = app.runtime.next_item_index(&app.project);
     let live_row = app.runtime.live_item_index(&app.project);
@@ -163,8 +202,12 @@ fn document_rows(app: &mut LumenApp, ui: &mut egui::Ui, docs: &[Uuid], reorder: 
     let images = app.thumbnails.images();
     egui::ScrollArea::vertical()
         .id_salt("library-list")
-        .max_height((ui.available_height() - 210.0).max(100.0))
+        // Fill the rail down to `reserve`, so Macros sits at the bottom with no dead gap.
+        .auto_shrink([false, false])
+        .max_height((ui.available_height() - reserve).max(100.0))
         .show(ui, |ui| {
+            // Rows are 56 pt tall; a 1 pt gap rather than 8 fits one more on screen.
+            ui.spacing_mut().item_spacing.y = ROW_GAP;
             let mut rects = Vec::new();
             let mut dragged: Option<(usize, bool)> = None;
             for (index, id) in docs.iter().enumerate() {
@@ -383,8 +426,8 @@ fn document_rows(app: &mut LumenApp, ui: &mut egui::Ui, docs: &[Uuid], reorder: 
             {
                 let slot = crate::add::list_slot(&rects, pointer);
                 let y = match slot {
-                    0 => rects[0].top() - style::GAP / 2.0,
-                    s if s == rects.len() => rects[s - 1].bottom() + style::GAP / 2.0,
+                    0 => rects[0].top() - ROW_GAP / 2.0,
+                    s if s == rects.len() => rects[s - 1].bottom() + ROW_GAP / 2.0,
                     s => (rects[s - 1].bottom() + rects[s].top()) / 2.0,
                 };
                 ui.painter().line_segment(
@@ -1084,6 +1127,12 @@ mod tests {
             assert!(n >= 1);
             assert!((w * n as f32 + (n - 1) as f32 * 8.0 - available).abs() < 0.01);
         }
+    }
+    #[test]
+    fn running_order_keeps_its_height_for_macros_only_when_open() {
+        assert!(bottom_reserve(true, false) < bottom_reserve(false, false));
+        assert!(bottom_reserve(false, false) < bottom_reserve(true, true));
+        assert_eq!(bottom_reserve(true, true), bottom_reserve(false, true));
     }
     #[test]
     fn missing_document_cannot_enter_playlist() {
