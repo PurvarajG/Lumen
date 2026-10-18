@@ -226,6 +226,11 @@ impl MediaPlayer {
             .clamp(1.0, f64::from(options.fps)) as u32;
         let mut video = Command::new(ffmpeg_program);
         video.args(["-hide_banner", "-loglevel", "error", "-nostdin"]);
+        // Hardware decode cuts a 4K reader's CPU about 3.5x; ffmpeg falls back to software
+        // for codecs VideoToolbox cannot take.
+        if cfg!(target_os = "macos") {
+            video.args(["-hwaccel", "videotoolbox"]);
+        }
         if options.looped {
             video.args(["-stream_loop", "-1"]);
         }

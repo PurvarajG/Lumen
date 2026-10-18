@@ -7,6 +7,7 @@ mod deck;
 mod displays;
 mod dock;
 mod file;
+mod fullres;
 mod inspector;
 #[cfg(target_os = "macos")]
 mod macos_quit;

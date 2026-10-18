@@ -9,7 +9,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{Receiver, Sender},
     },
     time::Instant,
@@ -91,6 +91,8 @@ pub struct LumenApp {
     smoke_test: bool,
     smoke_mode: bool,
     audience_fullscreen_state: Arc<AtomicBool>,
+    /// Audience window size in physical pixels (width << 32 | height); 0 until it has opened.
+    audience_pixels: Arc<AtomicU64>,
     stage_fullscreen_state: Arc<AtomicBool>,
     audience_close_requested: Arc<AtomicBool>,
     stage_close_requested: Arc<AtomicBool>,
@@ -113,6 +115,7 @@ pub struct LumenApp {
     remote_status: lumen_control::StatusHandle,
     remote_error: String,
     pub(super) thumbnails: crate::thumbnails::ThumbnailState,
+    full_images: crate::fullres::FullImages,
     pub(super) audio: crate::audio::AudioState,
     transition: Option<crate::render::OutputTransition>,
     history: lumen_core::history::History<Project>,
@@ -206,6 +209,7 @@ impl LumenApp {
             smoke_test: smoke,
             smoke_mode: smoke,
             audience_fullscreen_state: Arc::new(AtomicBool::new(settings.audience_fullscreen)),
+            audience_pixels: Arc::new(AtomicU64::new(0)),
             stage_fullscreen_state: Arc::new(AtomicBool::new(settings.stage_fullscreen)),
             audience_close_requested: Arc::new(AtomicBool::new(false)),
             stage_close_requested: Arc::new(AtomicBool::new(false)),
@@ -227,6 +231,7 @@ impl LumenApp {
             remote_status,
             remote_error,
             thumbnails: crate::thumbnails::ThumbnailState::new(cc.egui_ctx.clone()),
+            full_images: crate::fullres::FullImages::new(cc.egui_ctx.clone()),
             audio: crate::audio::AudioState::default(),
             transition: None,
             history: Default::default(),
@@ -398,7 +403,10 @@ impl LumenApp {
                 ..
             }) => {
                 self.media.stop();
-                self.media.load_video(path, looped, muted)
+                let packed = self.audience_pixels.load(Ordering::Relaxed);
+                let audience = Some(((packed >> 32) as u32, packed as u32));
+                let size = crate::media::video_output_size(audience, &self.displays);
+                self.media.load_video(path, looped, muted, size)
             }
             Some(Background::Image { path, .. }) => {
                 self.media.stop();
@@ -444,7 +452,7 @@ impl LumenApp {
             clocks: self.runtime.clone(),
             stage: self.settings.stage.clone(),
             transition: self.transition.clone(),
-            images: self.thumbnails.images(),
+            images: self.output_images(),
             now,
             clock: chrono::Local::now().format("%H:%M:%S").to_string(),
             project: ProjectView {
@@ -1605,12 +1613,16 @@ impl LumenApp {
         // applies; open windowed on the chosen display, then go fullscreen a frame later.
         let audience_fullscreen = self.fullscreen_audience && self.audience_placed;
         self.audience_placed = audience_open;
+        if !audience_open {
+            self.audience_pixels.store(0, Ordering::Relaxed);
+        }
         if audience_open {
             let viewport_id = ViewportId::from_hash_of("audience");
             ctx.request_repaint_of(viewport_id);
             let close_cb = self.audience_close_requested.clone();
             let root_ctx = ctx.clone();
             let fullscreen_state = self.audience_fullscreen_state.clone();
+            let pixels = self.audience_pixels.clone();
             ctx.show_viewport_deferred(
                 viewport_id,
                 crate::displays::output_viewport_builder(
@@ -1622,6 +1634,11 @@ impl LumenApp {
                 )
                 .0,
                 move |ctx, _| {
+                    let size = ctx.content_rect().size() * ctx.pixels_per_point();
+                    pixels.store(
+                        (u64::from(size.x as u32) << 32) | u64::from(size.y as u32),
+                        Ordering::Relaxed,
+                    );
                     let mut state = data.lock().map(|s| s.clone()).unwrap_or_default();
                     if let Some(video) = &state.video
                         && let Some(texture) = state.media.as_mut()
@@ -2060,7 +2077,13 @@ impl LumenApp {
         self.thumbnails.large_texture(path).cloned()
     }
     fn queue_object_images(&mut self) {
-        for object in self
+        let live = self
+            .runtime
+            .output
+            .live
+            .iter()
+            .flat_map(|l| &l.slide.objects);
+        let paths: std::collections::HashSet<PathBuf> = self
             .project
             .documents
             .iter()
@@ -2074,11 +2097,20 @@ impl LumenApp {
                     .iter()
                     .flat_map(|p| &p.objects),
             )
-        {
-            if let lumen_core::SlideObject::Image { path, .. } = object {
-                self.thumbnails.request(path);
-            }
+            .chain(live)
+            .filter_map(|object| match object {
+                lumen_core::SlideObject::Image { path, .. } => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+        for path in &paths {
+            self.thumbnails.request(path);
         }
+        self.full_images.sync(&paths);
+    }
+    /// Thumbnails for the grids; the outputs get full-size textures where they are ready.
+    fn output_images(&self) -> std::collections::HashMap<PathBuf, TextureHandle> {
+        self.full_images.over(self.thumbnails.images())
     }
     pub(super) fn paint_live(&self, ui: &egui::Ui, rect: egui::Rect) {
         crate::render::paint_audience(
@@ -2090,7 +2122,7 @@ impl LumenApp {
             self.seconds_of_day(),
             self.media.image_texture.as_ref(),
             self.transition.as_ref(),
-            &self.thumbnails.images(),
+            &self.output_images(),
         );
     }
     fn undo(&mut self, redo: bool) {

@@ -22,6 +22,46 @@ pub fn upload(texture: &mut TextureHandle, frame: Frame) {
     texture.set(image, TextureOptions::LINEAR);
 }
 
+/// Decodes a still at full size (at most 64 MiB on disk, 8192 px a side) for a worker thread.
+pub fn decode_image(path: &std::path::Path) -> Result<ColorImage, String> {
+    let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+    if len > 64 * 1024 * 1024 {
+        return Err("Image exceeds 64 MiB".into());
+    }
+    let mut reader = image::ImageReader::open(path)
+        .map_err(|e| e.to_string())?
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(128 * 1024 * 1024);
+    reader.limits(limits);
+    let rgba = reader.decode().map_err(|e| e.to_string())?.to_rgba8();
+    Ok(ColorImage::from_rgba_unmultiplied(
+        [rgba.width() as usize, rgba.height() as usize],
+        rgba.as_raw(),
+    ))
+}
+
+/// Video decode size: the audience window's pixel size once it has opened, else the largest
+/// connected display, never above 4K. The player never upscales, so a 1080p clip stays 1080p.
+pub fn video_output_size(
+    audience: Option<(u32, u32)>,
+    displays: &[crate::displays::DisplayInfo],
+) -> (u32, u32) {
+    let (w, h) = audience
+        .filter(|&(w, h)| w > 0 && h > 0)
+        .or_else(|| {
+            displays
+                .iter()
+                .map(|d| (d.key.width, d.key.height))
+                .max_by_key(|&(w, h)| u64::from(w) * u64::from(h))
+        })
+        .unwrap_or((1920, 1080));
+    (w.clamp(1, 3840), h.clamp(1, 2160))
+}
+
 pub enum Loaded {
     Image(u64, Result<(PathBuf, ColorImage), String>),
     Video(u64, Result<(PathBuf, MediaPlayer), String>),
@@ -76,38 +116,14 @@ impl MediaState {
         });
         self.status = "Loading still image...".into();
         self.track_worker(thread::spawn(move || {
-            let res = std::fs::metadata(&path)
-                .map_err(|e| e.to_string())
-                .and_then(|m| {
-                    if m.len() > 64 * 1024 * 1024 {
-                        Err("Image exceeds 64 MiB".into())
-                    } else {
-                        let mut reader = image::ImageReader::open(&path)
-                            .map_err(|e| e.to_string())?
-                            .with_guessed_format()
-                            .map_err(|e| e.to_string())?;
-                        let mut limits = image::Limits::default();
-                        limits.max_image_width = Some(8192);
-                        limits.max_image_height = Some(8192);
-                        limits.max_alloc = Some(128 * 1024 * 1024);
-                        reader.limits(limits);
-                        reader.decode().map_err(|e| e.to_string()).map(|img| {
-                            let rgba = img.to_rgba8();
-                            ColorImage::from_rgba_unmultiplied(
-                                [rgba.width() as usize, rgba.height() as usize],
-                                rgba.as_raw(),
-                            )
-                        })
-                    }
-                })
-                .map(|img| (path, img));
+            let res = decode_image(&path).map(|img| (path, img));
             let _ = tx.send(Loaded::Image(req, res));
             if let Some(ctx) = repaint_ctx {
                 ctx.request_repaint();
             }
         }));
     }
-    pub fn load_video(&mut self, path: PathBuf, looped: bool, muted: bool) {
+    pub fn load_video(&mut self, path: PathBuf, looped: bool, muted: bool, size: (u32, u32)) {
         self.request = self.request.wrapping_add(1);
         let req = self.request;
         let tx = self.tx.clone();
@@ -124,8 +140,8 @@ impl MediaState {
             let res = MediaPlayer::open(
                 &path,
                 PlaybackOptions {
-                    width: 1920,
-                    height: 1080,
+                    width: size.0,
+                    height: size.1,
                     fps: 60,
                     looped,
                     muted,
@@ -274,10 +290,41 @@ impl Drop for MediaState {
 
 #[cfg(test)]
 mod tests {
-    use super::MediaState;
+    use super::{MediaState, video_output_size};
+    use crate::displays::{DisplayInfo, DisplayKey};
     use lumen_core::{Background, MediaFit};
     use std::path::PathBuf;
     use std::{sync::mpsc, thread, time::Duration};
+
+    fn display(width: u32, height: u32) -> DisplayInfo {
+        DisplayInfo {
+            key: DisplayKey {
+                name: "d".into(),
+                width,
+                height,
+            },
+            x: 0,
+            y: 0,
+            primary: true,
+        }
+    }
+
+    #[test]
+    fn video_size_follows_audience_then_largest_display_and_caps_at_4k() {
+        let displays = [display(1920, 1080), display(2560, 1440)];
+        assert_eq!(
+            video_output_size(Some((3840, 2160)), &displays),
+            (3840, 2160)
+        );
+        assert_eq!(video_output_size(Some((1280, 720)), &displays), (1280, 720));
+        assert_eq!(video_output_size(None, &displays), (2560, 1440));
+        assert_eq!(video_output_size(Some((0, 0)), &displays), (2560, 1440));
+        assert_eq!(
+            video_output_size(Some((7680, 4320)), &displays),
+            (3840, 2160)
+        );
+        assert_eq!(video_output_size(None, &[]), (1920, 1080));
+    }
 
     #[test]
     fn video_identity_includes_mute_and_loop_options() {
