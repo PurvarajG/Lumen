@@ -80,6 +80,9 @@ impl Default for TimerState {
 pub struct Runtime {
     pub output: OutputState,
     pub timer_states: HashMap<Uuid, TimerState>,
+    /// Index into the playlist cues of the live cue, so a repeated document stays distinct.
+    #[serde(default)]
+    pub cursor: Option<usize>,
 }
 
 impl Runtime {
@@ -221,11 +224,65 @@ impl Runtime {
         result
     }
 
+    /// Trigger a cue by document and slide. A repeated document resolves to the first
+    /// occurrence at or after the live cue (wrapping), so the live copy keeps its place.
     pub fn trigger(
         &mut self,
         project: &Project,
         document_id: Uuid,
         slide_id: Uuid,
+    ) -> Result<(), CoreError> {
+        let cues = playlist_cues(project);
+        let start = self.current_index(&cues).unwrap_or(0);
+        let cursor = (start..cues.len())
+            .chain(0..start)
+            .find(|&i| cues[i] == (document_id, slide_id));
+        self.trigger_cue(project, document_id, slide_id, cursor)
+    }
+
+    /// Trigger the exact playlist cue at `index`. Returns `Ok(false)` when out of range.
+    pub fn trigger_index(&mut self, project: &Project, index: usize) -> Result<bool, CoreError> {
+        let Some(&(document_id, slide_id)) = playlist_cues(project).get(index) else {
+            return Ok(false);
+        };
+        self.trigger_cue(project, document_id, slide_id, Some(index))?;
+        Ok(true)
+    }
+
+    /// Playlist row (item index) holding the live cue.
+    pub fn live_item_index(&self, project: &Project) -> Option<usize> {
+        let cues = playlist_cues(project);
+        cue_row(project, self.current_index(&cues)?)
+    }
+
+    /// Playlist row holding the cue `peek_next` would return.
+    pub fn next_item_index(&self, project: &Project) -> Option<usize> {
+        let cues = playlist_cues(project);
+        cue_row(project, self.next_index(&cues)?)
+    }
+
+    fn current_index(&self, cues: &[(Uuid, Uuid)]) -> Option<usize> {
+        let live = self.output.live.as_ref()?;
+        let live = (live.document_id, live.slide.id);
+        match self.cursor {
+            Some(i) if cues.get(i) == Some(&live) => Some(i),
+            _ => cues.iter().position(|cue| *cue == live),
+        }
+    }
+
+    fn next_index(&self, cues: &[(Uuid, Uuid)]) -> Option<usize> {
+        match self.current_index(cues) {
+            None => (!cues.is_empty()).then_some(0),
+            Some(i) => (i + 1 < cues.len()).then_some(i + 1),
+        }
+    }
+
+    fn trigger_cue(
+        &mut self,
+        project: &Project,
+        document_id: Uuid,
+        slide_id: Uuid,
+        cursor: Option<usize>,
     ) -> Result<(), CoreError> {
         let document = project
             .document(document_id)
@@ -257,6 +314,7 @@ impl Runtime {
         });
         candidate.output.clear_text = false;
         candidate.output.media_cleared = false;
+        candidate.cursor = cursor;
         candidate.apply_actions_unchecked(project, &slide.actions);
         *self = candidate;
         Ok(())
@@ -274,11 +332,7 @@ impl Runtime {
         if cues.is_empty() {
             return Ok(false);
         }
-        let current = self.output.live.as_ref().and_then(|live| {
-            cues.iter()
-                .position(|(doc, slide)| *doc == live.document_id && *slide == live.slide.id)
-        });
-        let target = match current {
+        let target = match self.current_index(&cues) {
             None => {
                 if forward {
                     0
@@ -291,25 +345,13 @@ impl Runtime {
             Some(_) => return Ok(false),
         };
         let (document_id, slide_id) = cues[target];
-        self.trigger(project, document_id, slide_id)?;
+        self.trigger_cue(project, document_id, slide_id, Some(target))?;
         Ok(true)
     }
 
     pub fn peek_next(&self, project: &Project) -> Option<LiveSlide> {
         let cues = playlist_cues(project);
-        if cues.is_empty() {
-            return None;
-        }
-        let current = self.output.live.as_ref().and_then(|live| {
-            cues.iter()
-                .position(|(doc, slide)| *doc == live.document_id && *slide == live.slide.id)
-        });
-        let target = match current {
-            None => 0,
-            Some(index) if index + 1 < cues.len() => index + 1,
-            _ => return None,
-        };
-        let (document_id, slide_id) = cues[target];
+        let (document_id, slide_id) = cues[self.next_index(&cues)?];
         let document = project.document(document_id)?;
         let slide = document
             .slides
@@ -564,7 +606,7 @@ fn format_timer_value(value: f64) -> String {
 // ---------------------------------------------------------------------------
 
 // Playlist entries intentionally expand in order, including repeated documents.
-// If live is repeated, navigation anchors to its first matching occurrence.
+// `Runtime::cursor` says which occurrence is live.
 fn playlist_cues(project: &Project) -> Vec<(Uuid, Uuid)> {
     project
         .playlist
@@ -572,6 +614,20 @@ fn playlist_cues(project: &Project) -> Vec<(Uuid, Uuid)> {
         .filter_map(|item| project.document(item.document_id))
         .flat_map(|doc| doc.slides.iter().map(move |slide| (doc.id, slide.id)))
         .collect()
+}
+
+/// Playlist row (item index) that holds the cue at `cue`.
+fn cue_row(project: &Project, mut cue: usize) -> Option<usize> {
+    for (row, item) in project.playlist.iter().enumerate() {
+        let slides = project
+            .document(item.document_id)
+            .map_or(0, |doc| doc.slides.len());
+        if cue < slides {
+            return Some(row);
+        }
+        cue -= slides;
+    }
+    None
 }
 
 #[cfg(test)]
