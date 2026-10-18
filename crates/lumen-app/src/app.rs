@@ -297,10 +297,17 @@ impl LumenApp {
         .into();
     }
     pub(super) fn trigger(&mut self, doc: Uuid, slide: Uuid) {
+        self.run_trigger(|runtime, project| runtime.trigger(project, doc, slide).map(|()| true));
+    }
+    fn run_trigger(
+        &mut self,
+        f: impl FnOnce(&mut Runtime, &Project) -> Result<bool, lumen_core::CoreError>,
+    ) {
         let previous = self.runtime.output.clone();
         let previous_media = self.media.image_texture.clone();
-        match self.runtime.trigger(&self.project, doc, slide) {
-            Ok(()) => {
+        match f(&mut self.runtime, &self.project) {
+            Ok(false) => {}
+            Ok(true) => {
                 self.after_trigger(previous, previous_media);
                 self.status = "Cue is live".into();
                 if self.smoke_test {
@@ -1991,18 +1998,7 @@ impl LumenApp {
         match command {
             C::Next => self.navigate(true),
             C::Previous => self.navigate(false),
-            C::Trigger { index } => {
-                let cue = self
-                    .project
-                    .playlist
-                    .iter()
-                    .filter_map(|p| self.project.document(p.document_id))
-                    .flat_map(|d| d.slides.iter().map(move |s| (d.id, s.id)))
-                    .nth(index);
-                if let Some((d, s)) = cue {
-                    self.trigger(d, s);
-                }
-            }
+            C::Trigger { index } => self.run_trigger(|r, p| r.trigger_index(p, index)),
             C::Blackout { on } => self.apply_actions(&[A::Blackout(on)]),
             C::ClearText => self.clear_layer(2),
             C::ClearAll => self.clear_layer(1),

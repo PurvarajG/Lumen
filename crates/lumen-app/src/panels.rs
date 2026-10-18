@@ -147,6 +147,8 @@ fn empty_running_order(app: &mut LumenApp, ui: &mut egui::Ui) {
 
 fn document_rows(app: &mut LumenApp, ui: &mut egui::Ui, docs: &[Uuid], reorder: bool) {
     let next = app.runtime.peek_next(&app.project);
+    let next_row = app.runtime.next_item_index(&app.project);
+    let live_row = app.runtime.live_item_index(&app.project);
     let images = app.thumbnails.images();
     egui::ScrollArea::vertical()
         .id_salt("library-list")
@@ -164,13 +166,21 @@ fn document_rows(app: &mut LumenApp, ui: &mut egui::Ui, docs: &[Uuid], reorder: 
                     crate::add::doc_kind(doc),
                 );
                 ui.push_id(index, |ui| {
-                    let on_deck = next.as_ref().is_some_and(|n| n.document_id == *id);
-                    let live = app
-                        .runtime
-                        .output
-                        .live
-                        .as_ref()
-                        .is_some_and(|n| n.document_id == *id);
+                    // The running order marks one row; the library lists each document once.
+                    let on_deck = if reorder {
+                        next_row == Some(index)
+                    } else {
+                        next.as_ref().is_some_and(|n| n.document_id == *id)
+                    };
+                    let live = if reorder {
+                        live_row == Some(index)
+                    } else {
+                        app.runtime
+                            .output
+                            .live
+                            .as_ref()
+                            .is_some_and(|n| n.document_id == *id)
+                    };
                     let selected = app.selected_doc == *id && !crate::books::has_preview(app);
                     let (rect, r) = ui.allocate_exact_size(
                         Vec2::new(ui.available_width(), ROW_HEIGHT),

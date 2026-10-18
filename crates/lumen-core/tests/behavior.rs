@@ -107,6 +107,77 @@ fn navigation_crosses_documents_skips_empty_and_honors_boundaries() {
     assert!(!r2.previous(&p2).unwrap());
 }
 
+fn repeated_order() -> Project {
+    let theme = Theme::default();
+    let tid = theme.id;
+    let docs = vec![
+        doc("A", tid, &["a"]),
+        doc("B", tid, &["b"]),
+        doc("C", tid, &["c"]),
+    ];
+    let ids: Vec<_> = docs.iter().map(|d| d.id).collect();
+    let mut p = project_with_docs(docs, theme);
+    p.playlist = [ids[0], ids[1], ids[0], ids[2]]
+        .into_iter()
+        .map(|document_id| lumen_core::PlaylistItem {
+            id: Uuid::new_v4(),
+            document_id,
+        })
+        .collect();
+    p
+}
+
+#[test]
+fn repeated_document_advances_through_every_occurrence() {
+    let p = repeated_order();
+    let mut r = Runtime::default();
+    for (row, label) in ["a", "b", "a", "c"].into_iter().enumerate() {
+        assert_eq!(
+            r.peek_next(&p).unwrap().slide.label,
+            label,
+            "peek at step {row}"
+        );
+        assert_eq!(r.next_item_index(&p), Some(row));
+        assert!(r.next(&p).unwrap());
+        assert_eq!(r.output.live.as_ref().unwrap().slide.label, label);
+        assert_eq!(r.live_item_index(&p), Some(row));
+    }
+    assert!(r.peek_next(&p).is_none());
+    assert!(!r.next(&p).unwrap());
+    assert_eq!(r.live_item_index(&p), Some(3));
+    assert!(r.previous(&p).unwrap());
+    assert_eq!(r.live_item_index(&p), Some(2));
+    assert!(r.previous(&p).unwrap());
+    assert!(r.previous(&p).unwrap());
+    assert_eq!(r.live_item_index(&p), Some(0));
+}
+
+#[test]
+fn triggering_a_repeated_document_keeps_the_live_occurrence() {
+    let p = repeated_order();
+    let (a, a_slide) = (p.documents[0].id, p.documents[0].slides[0].id);
+    let mut r = Runtime::default();
+    r.trigger(&p, a, a_slide).unwrap();
+    assert_eq!(r.live_item_index(&p), Some(0));
+    r.trigger_index(&p, 2).unwrap();
+    assert_eq!(r.live_item_index(&p), Some(2));
+    r.trigger(&p, a, a_slide).unwrap();
+    assert_eq!(r.live_item_index(&p), Some(2));
+    // From the last row, the next A match wraps around to the first row.
+    r.trigger_index(&p, 3).unwrap();
+    r.trigger(&p, a, a_slide).unwrap();
+    assert_eq!(r.live_item_index(&p), Some(0));
+    assert!(!r.trigger_index(&p, 9).unwrap());
+}
+
+#[test]
+fn runtime_json_without_cursor_still_loads() {
+    let mut value = serde_json::to_value(Runtime::default()).unwrap();
+    value.as_object_mut().unwrap().remove("cursor");
+    let r: Runtime = serde_json::from_value(value).unwrap();
+    assert_eq!(r.cursor, None);
+}
+
 #[test]
 fn navigation_from_no_live_uses_playlist_edges_and_peek_is_pure() {
     let mut p = Project::demo();
