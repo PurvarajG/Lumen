@@ -41,7 +41,7 @@ The selected cue is the armed cue; going live arms the one after it (Present onl
 
 ## Motion
 
-Only output transitions (cut, dissolve, fade through black, push) and a 120 ms hover/selection ease. No UI animation delays a cue.
+Only output transitions (cut, dissolve, fade through black, push) and a 120 ms hover/selection ease. The show transition (default 400 ms fade, Present "Transition" picker) applies to every cue and clear unless a slide sets its own; transitions are smoothstep-eased and a new video or photo holds the previous picture until its first frame. Blackout is always instant. No UI animation delays a cue.
 
 ## Refuse
 
