@@ -593,12 +593,15 @@ fn build_download_plan(book_id: &str) -> Result<Vec<PlanItem>, LibraryError> {
         "kirtan" => {
             // Number ranges as published on anirdesh.com: part 2 skips 337..=1000 and 1163, and a number the
             // site does not have serves its landing page (skipped at download time as a safety net).
-            for (part, numbers) in [
-                (1, vec![1..=1101]),
-                (2, vec![1..=336, 1001..=1162, 1164..=1429]),
-                (3, vec![1..=299]),
-            ] {
-                for no in numbers.into_iter().flatten() {
+            let ranges = [
+                (1, 1..=1101),
+                (2, 1..=336),
+                (2, 1001..=1162),
+                (2, 1164..=1429),
+                (3, 1..=299),
+            ];
+            for (part, numbers) in ranges {
+                for no in numbers {
                     let key = format!("{part}-{no}");
                     let url =
                         format!("https://www.anirdesh.com/kirtan/index.php?part={part}&no={no}");

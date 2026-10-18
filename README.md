@@ -13,7 +13,7 @@ Full ProPresenter parity is a long-term goal; see [the parity tracker](docs/PARI
 - Needs a Mac with Apple Silicon (M1 or newer) running macOS 12 or later.
 - Video needs FFmpeg: `brew install ffmpeg`.
 - Every release page lists the SHA-256 of its DMG so you can check the download.
-- No account, no cloud. Scripture books are downloaded on your Mac when you ask for them and are never bundled.
+- No account, no cloud. 12 of the 15 scripture and kirtan books are inside the app, so search works offline from the first launch and nothing is downloaded. The DMG is about 21 MB because of them. (Yogi Gita, Swaminarayan Siddhant Karika and Aksharamrutam are not included yet; see Scripture & Books.)
 
 ### Install
 1. Open the downloaded `.dmg` and drag **Lumen Presenter** into **Applications**.
@@ -35,25 +35,29 @@ The window is a set of six panels you can move: **Running order**, **Macros**, *
 - **Preview and live are separate.** Selecting or editing a cue only changes the Preview. `Return`, `Space` or **Go live** sends a copy to the audience screen.
 
 ### Photos and videos
-Photos and videos that are not 16:9 show with bars by default. Right-click a cue (or a running-order row) and pick **Scale**: **Fit (show bars)**, **Fill screen (crop)** or **Stretch**. The Prepare inspector has the same choice. A change takes effect the next time the cue goes live. Video frames are timed to the audience display's own refresh; a 25 fps clip is smoothest on a 75 Hz projector, and 30 fps content is smoothest at 60 Hz.
+Photos and videos that are not 16:9 show with bars by default. Right-click a cue (or a running-order row) and pick **Scale**: **Fit (show bars)**, **Fill screen (crop)** or **Stretch**. The Prepare inspector has the same choice. A change takes effect the next time the cue goes live. Video frames are timed to the audience display's own refresh; a 25 fps clip is smoothest on a 75 Hz projector, and 30 fps content is smoothest at 60 Hz. Video is decoded at the audience display's own pixel size (up to 4K) and logos and overlay images are drawn at full size, so nothing is shrunk on the way to the projector or LED wall.
+
+### Moving a show to another Mac
+**File → Save with media…** copies every photo, video, sound and deck the show uses into a new folder (`<Name>/<Name>.lumen.json` plus `Media/`), and the show then refers to them by relative paths, so the whole folder can be copied, zipped or reused for a later service. If a show opens with files missing, a banner offers **Locate folder…**, which relinks them by file name. **File → Open recent** lists earlier shows, and Lumen reopens the last one at launch.
 
 ### Output windows
-- **Audience:** clean fullscreen or windowed output for projectors and TVs.
+- **Audience:** clean fullscreen or windowed output for projectors and TVs. If the chosen display comes back at a different resolution (an LED processor changing its input mode) or after a cable drop, the window returns to it by itself. For an LED wall fed through a processor, set the processor to take a 16:9 input at its native resolution (1920×1080 or 3840×2160) at 60 Hz (50 Hz for 25 fps content), full-range RGB.
 - **Stage:** a confidence monitor with the current slide, the next slide, notes, clocks and urgent messages.
 
 ---
 
 ## Scripture & Books (Offline Operation)
 
-Lumen includes built-in download and indexing for scripture and kirtan collections (Vachanamrut, Swamini Vato, Satsang Diksha, Kirtan Muktavali, and 12 other canonical texts) from anirdesh.com.
+Lumen ships with 12 scripture and kirtan collections (Vachanamrut, Swamini Vato, Satsang Diksha, Kirtan Muktavali, Nishkulanand Kavya, Bhaktachintamani, Harililamrut, Shrimad Bhagavad Gita, Shrimad Bhagavata Purana and others) from anirdesh.com, already indexed. Nothing is downloaded at first launch. Yogi Gita, Swaminarayan Siddhant Karika and Aksharamrutam are in the catalog but their download does not work yet (the site's pages differ from what the importer expects), so they are not included.
 
 > [!NOTE]
-> **Copyright & Privacy:** Book texts and commercial fonts are never bundled in Lumen binaries. They are downloaded on demand directly to the operator's machine and stored in local application data. Once downloaded, all book search, indexing, and slide generation operate completely offline without internet access.
+> **Copyright:** the book texts are © Anirdesh.com / BAPS and are included with their permission; they are not covered by Lumen's MIT licence (see `Contents/Resources/Licenses/Anirdesh-books.txt` in the app). They are never committed to this repository. The commercial ChitraUni font is not bundled either.
 
-To download books:
-1. Open the **Books** tab in the left sidebar.
-2. Click **Download** next to the desired text.
-3. Once downloaded, use `Cmd+F` or the search field to find passages by title, index (e.g. *Gadhada I-1*), or text lyrics. Matching passages can be previewed and converted to presentation slides with a single click.
+To use the books:
+1. Open the **Books** tab in the left sidebar. Included books say **Included**; click **Open book** to browse one.
+2. Use `Cmd+F` or the search field to find passages by title, index (e.g. *Gadhada I-1*), or text lyrics. Matching passages can be previewed and converted to presentation slides with a single click.
+
+A development build that is not packaged has no included books; the Books tab then offers **Download** (and **Resume** for a half-finished download) from anirdesh.com, and adds a line to `Books/download.log` in the data folder if a download fails. Maintainers fetch the books for a release with the `fetch_books` step in [docs/RELEASE.md](docs/RELEASE.md).
 
 ---
 
@@ -174,7 +178,7 @@ Lumen accepts MIDI Note-On events (`0x90..=0x9F`, `velocity > 0`) on any configu
 - **Gujarati Typography:**
   - Bundled fallback: **Noto Sans Gujarati** (SIL Open Font License) is embedded and always active.
   - High-fidelity optional font: **ChitraUni** (commercial font, © Summit Information Technologies). If installed in Font Book (`~/Library/Fonts` or `/Library/Fonts`), Lumen automatically detects and shapes text with ChitraUni.
-- **Network:** Only required during on-demand book downloads from anirdesh.com. All subsequent playback, searching, and control work offline.
+- **Network:** Not required. The books are included; playback, searching and control all work offline.
 
 ---
 
