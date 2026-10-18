@@ -31,8 +31,8 @@ pub const CATALOG: &[BookInfo] = &[
         id: "kirtan",
         title_gu: "કીર્તન મુક્તાવલી",
         title_en: "Kirtan Muktavali",
-        units: 2491,
-        pages: 2491,
+        units: 2829,
+        pages: 2829,
     },
     BookInfo {
         id: "diksha",
@@ -45,8 +45,8 @@ pub const CATALOG: &[BookInfo] = &[
         id: "kavya",
         title_gu: "નિષ્કુળાનંદ કાવ્ય",
         title_en: "Nishkulanand Kavya",
-        units: 600,
-        pages: 600,
+        units: 55,
+        pages: 55,
     },
     BookInfo {
         id: "chintamani",
@@ -108,15 +108,15 @@ pub const CATALOG: &[BookInfo] = &[
         id: "bhagvat",
         title_gu: "શ્રીમદ્ભાગવતપુરાણ",
         title_en: "Shrimad Bhagavata Purana",
-        units: 347,
-        pages: 347,
+        units: 335,
+        pages: 335,
     },
     BookInfo {
         id: "shloks",
         title_gu: "સંસ્કાર કુંજ",
         title_en: "Sanskar Kunj",
-        units: 2,
-        pages: 5,
+        units: 1,
+        pages: 1,
     },
 ];
 

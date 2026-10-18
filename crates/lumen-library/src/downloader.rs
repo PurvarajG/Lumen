@@ -575,27 +575,20 @@ fn build_download_plan(book_id: &str) -> Result<Vec<PlanItem>, LibraryError> {
             }
         }
         "kirtan" => {
-            for no in 1..=1300 {
-                let key = format!("1-{no}");
-                let url = format!("https://www.anirdesh.com/kirtan/index.php?part=1&no={no}");
-                plan.push(PlanItem {
-                    key,
-                    strategy: FetchStrategy::SinglePage {
-                        url,
-                        parser: parse_kirtan,
-                    },
-                });
-            }
-            for no in 1..=1191 {
-                let key = format!("2-{no}");
-                let url = format!("https://www.anirdesh.com/kirtan/index.php?part=2&no={no}");
-                plan.push(PlanItem {
-                    key,
-                    strategy: FetchStrategy::SinglePage {
-                        url,
-                        parser: parse_kirtan,
-                    },
-                });
+            // Part sizes as published on anirdesh.com (a number past the end serves the landing page).
+            for (part, count) in [(1, 1101), (2, 1429), (3, 299)] {
+                for no in 1..=count {
+                    let key = format!("{part}-{no}");
+                    let url =
+                        format!("https://www.anirdesh.com/kirtan/index.php?part={part}&no={no}");
+                    plan.push(PlanItem {
+                        key,
+                        strategy: FetchStrategy::SinglePage {
+                            url,
+                            parser: parse_kirtan,
+                        },
+                    });
+                }
             }
         }
         "diksha" => {
@@ -852,5 +845,20 @@ fn vachanamrut_key(vachno: usize) -> String {
         269..=273 => format!("jetalpur-{}", vachno - 268),
         274 => "additional-11".into(),
         _ => format!("{vachno}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A plan longer than the site's real count fails the whole book at the first missing page
+    /// (kirtan did, at part 1 no. 1102); a shorter one silently drops units.
+    #[test]
+    fn download_plans_match_the_catalog_unit_counts() {
+        for info in catalog() {
+            let plan = build_download_plan(info.id).expect(info.id);
+            assert_eq!(plan.len(), info.units, "{}", info.id);
+        }
     }
 }
