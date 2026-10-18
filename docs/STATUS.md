@@ -59,3 +59,23 @@ Integrated the approved saffron L / projected-light identity as a small branding
 Verified: fmt, clippy -D warnings, 237 workspace tests. Window-only before/after captures (`.local/qa/f1/shots`) in Present and Prepare at 1500, 1280 and 1024 pt on the Retina laptop (2x), and 1500 pt on the L27q (1x): the mark is crisp with its diagonal gap at both scales, and control order and row 2 match the before shots. The header row is about 3 pt taller because the mark is 28 pt.
 
 Not verified by hand: typing a new show name and saving (synthetic keystrokes and value setting do not reach egui text fields here; the field keeps the same binding and dirty tracking as before), the brand tooltip, and the Dock/Finder rendering of the installed app (Quick Look thumbnailing hung).
+
+## Release candidate 1.0.0-rc.4 (2026-10-18)
+
+Wave G1 below. `.local/dist/Lumen-Presenter-1.0.0-rc.4-macos-arm64.dmg` (ad-hoc signed, not notarized): `hdiutil verify` and `codesign --verify --deep --strict` pass, Info.plist reports 1.0.0-rc.4, no ChitraUni in the bundle, bundled binary passes `--smoke-test`.
+
+## Wave G1: fixes from the first live service (2026-10-17/18)
+
+Plan and evidence: `docs/superpowers/plans/2026-10-17-live-feedback.md`; captures and scripts in `.local/qa/g1/`. Executed by Sonnet 5.5 workers, reviewed and merged by the orchestrator.
+
+- Video (G1.1): frames are paced on a steady clock instead of `ffmpeg -re`, decoded at the source rate (≤ 60 fps) and size (≤ 1080p), and the console and audience/stage windows repaint every frame while video or a transition plays (was every 80 ms). A 30 fps clip measured 69 → 122–132 distinct frames in 4 s (mean 58.6 → 30–33 ms, worst 83 → 42 ms) on the live monitor and the audience window; about 15–19 % of one core for Lumen plus ffmpeg's share.
+- Repeated running-order items (G1.2): Next used to loop back to the first copy of a document that appears twice; the runtime now tracks the live occurrence (`Runtime::cursor`), rows light LIVE/up-next by row, HTTP Trigger and `/status` use the exact occurrence.
+- Transitions (G1.3): show-wide transition (default 400 ms fade, saved in the project, Present "Transition" picker); a slide's Cut means "use the show transition". Clears fade, Blackout stays instant. A new video/photo holds the previous picture until its first frame (no black flash, also with Cut). Smoothstep easing. Fades measured at about 60 fps.
+- Cue flow (G1.4): in Present, going live arms the next cue (selection follows the order across documents), so Space, Return and the button always send the next thing; the button reads Next, or "Go live: <cue>" when the operator picked something else; the Preview heading reads "Up next". Next at the end of the order does nothing.
+- Running order (G1.5): rail 300 pt, resizable 240–520 pt; the list takes the full height (12 rows at 1500×949, was about 7); Macros collapse in Present; New document is Prepare only.
+- Previews (G1.6): three thumbnail workers, failed thumbnails retry after 10 s (missing files do not), every preview surface shows Loading / "Can't preview" / "File not found" instead of black; the Preview shows live media only when the selected cue is the live one.
+- Audio/video transport (G1.7): now-playing strip under the transport for audio cues and unmuted video: play/pause, elapsed / remaining, progress, stop (audio fades 300 ms), live volume for audio. Fixed: ffmpeg-made `.m4a` files were rejected by the decoder ("Unrecognized format").
+
+Verified: fmt, clippy -D warnings, 261 workspace tests. Native on the laptop display with window-only captures and HTTP control: cadence numbers above, fade frames, eight-step Next walk across document boundaries and the repeated item, click-to-arm then Space, 12-row rail and 520 pt drag, loading/missing/corrupt placeholders, pause/resume/stop for audio and video.
+
+Not verified by hand: the external display (not connected during this wave; laptop ProMotion + 60 Hz external is the case to re-measure with `.local/qa/g1/measure-cadence.sh`), Add files… through the file dialog (shows were built from JSON), book-preview flows after arming, grid scroll-into-view, gapless audio looping. Known gaps: the big Preview is a stretched 320×180 thumbnail (soft); video volume is not adjustable live; no seeking; a slide cannot force a hard cut while the show fades; panels are resizable but not dockable (pushed back in the plan).
