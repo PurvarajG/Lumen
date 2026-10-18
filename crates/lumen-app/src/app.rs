@@ -342,6 +342,11 @@ impl LumenApp {
         let ids = |l: &LiveSlide| (l.document_id, l.slide.id);
         let armed = self.selected_live().as_ref().map(ids);
         let next = self.runtime.peek_next(&self.project).as_ref().map(ids);
+        // End of the order: the live cue stays armed, and Next must not restart it.
+        if next.is_none() && armed.is_some() && armed == self.runtime.output.live.as_ref().map(ids)
+        {
+            return;
+        }
         match armed {
             // `navigate` takes the exact next occurrence; `trigger` by id could re-pick a repeated item.
             Some((doc, slide))
@@ -360,8 +365,7 @@ impl LumenApp {
         else {
             return;
         };
-        // The selection moves, so a book result that was not sent stops being the preview.
-        crate::books::close_preview(self);
+        // A book preview stays open: it is independent of the selection and closes when sent.
         self.selected_doc = doc;
         self.selected_slide = Some(slide);
         self.arm_scroll = true;
@@ -400,14 +404,7 @@ impl LumenApp {
         let now = self.seconds_of_day();
         let snapshot = lumen_control::StatusSnapshot {
             project: self.project.name.clone(),
-            live_index: self.runtime.output.live.as_ref().and_then(|l| {
-                self.project
-                    .playlist
-                    .iter()
-                    .filter_map(|p| self.project.document(p.document_id))
-                    .flat_map(|d| d.slides.iter())
-                    .position(|s| s.id == l.slide.id)
-            }),
+            live_index: self.runtime.live_cue_index(&self.project),
             live_text: self
                 .runtime
                 .output

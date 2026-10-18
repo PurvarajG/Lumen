@@ -262,6 +262,11 @@ impl Runtime {
         Ok(true)
     }
 
+    /// Index of the live cue among all running-order cues (the exact occurrence).
+    pub fn live_cue_index(&self, project: &Project) -> Option<usize> {
+        self.current_index(&playlist_cues(project))
+    }
+
     /// Playlist row (item index) holding the live cue.
     pub fn live_item_index(&self, project: &Project) -> Option<usize> {
         let cues = playlist_cues(project);
