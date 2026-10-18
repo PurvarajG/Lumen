@@ -67,6 +67,9 @@ pub struct LumenApp {
     pub show_stage: bool,
     pub fullscreen_audience: bool,
     pub fullscreen_stage: bool,
+    /// An output window existed last frame, so fullscreen may now apply on its own display.
+    audience_placed: bool,
+    stage_placed: bool,
     pub published: Arc<Mutex<Published>>,
     tx: Sender<FileResult>,
     rx: Receiver<FileResult>,
@@ -178,6 +181,8 @@ impl LumenApp {
             show_stage: smoke,
             fullscreen_audience: settings.audience_fullscreen,
             fullscreen_stage: settings.stage_fullscreen,
+            audience_placed: false,
+            stage_placed: false,
             published: Arc::new(Mutex::new(Published::default())),
             tx,
             rx,
@@ -1584,7 +1589,12 @@ impl LumenApp {
             }
         }
         let data = self.published.clone();
-        if self.show_audience && self.runtime.output.deck.is_none() {
+        let audience_open = self.show_audience && self.runtime.output.deck.is_none();
+        // macOS fullscreens a new window on the display it starts on, before the position
+        // applies; open windowed on the chosen display, then go fullscreen a frame later.
+        let audience_fullscreen = self.fullscreen_audience && self.audience_placed;
+        self.audience_placed = audience_open;
+        if audience_open {
             let viewport_id = ViewportId::from_hash_of("audience");
             ctx.request_repaint_of(viewport_id);
             let close_cb = self.audience_close_requested.clone();
@@ -1597,7 +1607,7 @@ impl LumenApp {
                     [960.0, 540.0],
                     self.settings.audience_display.as_ref(),
                     &self.displays,
-                    self.fullscreen_audience,
+                    audience_fullscreen,
                 )
                 .0,
                 move |ctx, _| {
@@ -1638,6 +1648,8 @@ impl LumenApp {
             );
         }
         let data = self.published.clone();
+        let stage_fullscreen = self.fullscreen_stage && self.stage_placed;
+        self.stage_placed = self.show_stage;
         if self.show_stage {
             let viewport_id = ViewportId::from_hash_of("stage");
             ctx.request_repaint_of(viewport_id);
@@ -1651,7 +1663,7 @@ impl LumenApp {
                     [700.0, 600.0],
                     self.settings.stage_display.as_ref(),
                     &self.displays,
-                    self.fullscreen_stage,
+                    stage_fullscreen,
                 )
                 .0,
                 move |ctx, _| {
