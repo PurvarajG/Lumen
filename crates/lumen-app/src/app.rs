@@ -429,7 +429,7 @@ impl LumenApp {
                 .media
                 .player
                 .as_ref()
-                .is_some_and(|player| !player.is_finished()),
+                .is_some_and(|player| !player.is_finished() && !player.is_paused()),
         };
         if let Ok(mut p) = self.published.lock() {
             *p = view;
@@ -1127,15 +1127,23 @@ impl eframe::App for LumenApp {
             self.allow_close = true;
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
+        // Playing video and transitions repaint every frame (vsync-paced); the rest tick at 80 ms.
+        if self.transition.is_some()
+            || self
+                .media
+                .player
+                .as_ref()
+                .is_some_and(|p| !p.is_finished() && !p.is_paused())
+        {
+            ctx.request_repaint();
+        }
         if self
             .runtime
             .timer_states
             .values()
             .any(|timer| timer.running)
-            || self.media.player.as_ref().is_some_and(|p| !p.is_finished())
             || self.runtime.output.deck.is_some()
             || self.media.pending
-            || self.transition.is_some()
             || self.show_stage
             || self.runtime.output.message.is_some()
             || self.remote.as_ref().is_some_and(|r| r.is_running())
@@ -1549,10 +1557,9 @@ impl LumenApp {
                 .0,
                 move |ctx, _| {
                     let state = data.lock().map(|s| s.clone()).unwrap_or_default();
-                    if state.media_animating
-                        || state.transition.is_some()
-                        || state.output.message.is_some()
-                    {
+                    if state.media_animating || state.transition.is_some() {
+                        ctx.request_repaint();
+                    } else if state.output.message.is_some() {
                         ctx.request_repaint_after(std::time::Duration::from_millis(80));
                     }
                     egui::CentralPanel::default()
@@ -1604,7 +1611,9 @@ impl LumenApp {
                 .0,
                 move |ctx, _| {
                     let state = data.lock().map(|s| s.clone()).unwrap_or_default();
-                    if state.media_animating || state.runtime.timers.iter().any(|t| t.2) {
+                    if state.media_animating {
+                        ctx.request_repaint();
+                    } else if state.runtime.timers.iter().any(|t| t.2) {
                         ctx.request_repaint_after(std::time::Duration::from_millis(80));
                     }
                     egui::CentralPanel::default().show(ctx, |ui| {

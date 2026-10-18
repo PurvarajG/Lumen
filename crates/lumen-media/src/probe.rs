@@ -8,6 +8,7 @@ pub struct MediaInfo {
     pub height: u32,
     pub duration_secs: Option<f64>,
     pub has_audio: bool,
+    pub fps: Option<f64>,
 }
 
 pub fn probe(path: &Path) -> Result<MediaInfo, MediaError> {
@@ -20,7 +21,7 @@ pub(crate) fn probe_with_program(path: &Path, program: &str) -> Result<MediaInfo
         "-v",
         "error",
         "-show_entries",
-        "format=duration:stream=codec_type,width,height",
+        "format=duration:stream=codec_type,width,height,avg_frame_rate",
         "-of",
         "json",
         "--",
@@ -77,6 +78,10 @@ pub(crate) fn probe_with_program(path: &Path, program: &str) -> Result<MediaInfo
         width,
         height,
         duration_secs,
+        fps: video
+            .get("avg_frame_rate")
+            .and_then(Value::as_str)
+            .and_then(parse_frame_rate),
         has_audio: streams
             .iter()
             .any(|s| s.get("codec_type").and_then(Value::as_str) == Some("audio")),
@@ -97,6 +102,13 @@ pub fn tool_availability() -> Vec<(String, bool)> {
             ((*tool).to_string(), available)
         })
         .collect()
+}
+
+/// Parses ffprobe's "num/den"; `None` for 0/0, garbage, or rates outside 1-240 fps.
+fn parse_frame_rate(text: &str) -> Option<f64> {
+    let (num, den) = text.split_once('/')?;
+    let rate = num.trim().parse::<f64>().ok()? / den.trim().parse::<f64>().ok()?;
+    (1.0..=240.0).contains(&rate).then_some(rate)
 }
 
 fn number_or_string(v: &Value) -> Option<f64> {
@@ -212,6 +224,15 @@ pub(crate) fn bounded_text(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frame_rate_parses_ratios_and_rejects_unusable_values() {
+        assert!((parse_frame_rate("30000/1001").unwrap() - 29.97).abs() < 0.001);
+        assert_eq!(parse_frame_rate("25/1"), Some(25.0));
+        assert_eq!(parse_frame_rate("0/0"), None);
+        assert_eq!(parse_frame_rate("1000/1"), None);
+        assert_eq!(parse_frame_rate("junk"), None);
+    }
 
     #[cfg(unix)]
     #[test]
