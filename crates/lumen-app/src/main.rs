@@ -22,6 +22,7 @@ mod style;
 mod text;
 mod thumbnails;
 mod tools;
+mod transport;
 
 #[cfg(target_os = "macos")]
 use std::env;

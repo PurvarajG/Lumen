@@ -895,6 +895,7 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
             ui.colored_label(style::LIVE, "Output is blacked out");
         }
     });
+    crate::transport::now_playing(app, ui);
     ui.separator();
     if !app.present {
         let mut selected = app.selected_live();

@@ -5,7 +5,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{
         Arc, Mutex, MutexGuard,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
     thread::{self, JoinHandle},
@@ -60,6 +60,12 @@ pub struct MediaPlayer {
     error: Arc<Mutex<Option<String>>>,
     finished: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    /// Frames shown so far; the pacer's own counter resets on pause, this one does not.
+    frames: Arc<AtomicU64>,
+    fps: u32,
+    duration_secs: Option<f64>,
+    looped: bool,
+    has_sound: bool,
     workers: Vec<JoinHandle<()>>,
     stderr_readers: Vec<JoinHandle<()>>,
     audio_monitor: Option<JoinHandle<()>>,
@@ -139,7 +145,8 @@ impl MediaPlayer {
         };
         let audio_stderr = Arc::new(Mutex::new(Vec::new()));
 
-        let mut audio_child = if !options.muted && info.has_audio {
+        let has_sound = !options.muted && info.has_audio;
+        let mut audio_child = if has_sound {
             match start_audio_child(
                 ffplay_program,
                 path_arg,
@@ -168,6 +175,7 @@ impl MediaPlayer {
         let error = Arc::new(Mutex::new(None));
         let finished = Arc::new(AtomicBool::new(false));
         let paused = Arc::new(AtomicBool::new(false));
+        let frames = Arc::new(AtomicU64::new(0));
         let cancel_audio_monitor = Arc::new(AtomicBool::new(false));
         let audio_monitor = if lock(&children).audio.is_some() {
             let children = children.clone();
@@ -241,6 +249,7 @@ impl MediaPlayer {
                 error: error.clone(),
                 finished: finished.clone(),
                 paused: paused.clone(),
+                frames: frames.clone(),
                 stderr: video_stderr,
             };
             start_decoder(stdout, context)
@@ -267,6 +276,11 @@ impl MediaPlayer {
             error,
             finished,
             paused,
+            frames,
+            fps,
+            duration_secs: info.duration_secs,
+            looped: options.looped,
+            has_sound,
             workers,
             stderr_readers,
             audio_monitor,
@@ -287,6 +301,22 @@ impl MediaPlayer {
     }
     pub fn is_paused(&self) -> bool {
         self.paused.load(Ordering::Acquire)
+    }
+    /// Unmuted and the file has an audio track.
+    pub fn has_sound(&self) -> bool {
+        self.has_sound
+    }
+    /// Playback position: frames shown over the frame rate, wrapped for a looped clip.
+    pub fn position_secs(&self) -> f64 {
+        position_in(
+            self.frames.load(Ordering::Acquire),
+            self.fps,
+            self.duration_secs,
+            self.looped,
+        )
+    }
+    pub fn duration_secs(&self) -> Option<f64> {
+        self.duration_secs.filter(|d| *d > 0.0)
     }
 
     pub fn set_paused(&mut self, paused: bool) -> Result<(), MediaError> {
@@ -341,6 +371,15 @@ impl MediaPlayer {
 impl Drop for MediaPlayer {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+fn position_in(frames: u64, fps: u32, duration: Option<f64>, looped: bool) -> f64 {
+    let secs = frames as f64 / f64::from(fps);
+    match duration {
+        Some(d) if d > 0.0 && looped => secs % d,
+        Some(d) if d > 0.0 => secs.min(d),
+        _ => secs,
     }
 }
 
@@ -430,6 +469,7 @@ struct DecoderContext {
     error: Arc<Mutex<Option<String>>>,
     finished: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    frames: Arc<AtomicU64>,
     stderr: Arc<Mutex<Vec<u8>>>,
 }
 
@@ -550,6 +590,7 @@ fn pace(rx: mpsc::Receiver<Vec<u8>>, context: DecoderContext) {
         latest,
         finished,
         paused,
+        frames,
         ..
     } = context;
     let mut sequence = 0u64;
@@ -575,6 +616,7 @@ fn pace(rx: mpsc::Receiver<Vec<u8>>, context: DecoderContext) {
             thread::sleep((due - now).min(Duration::from_millis(20)));
         }
         sequence = sequence.wrapping_add(1);
+        frames.fetch_add(1, Ordering::Release);
         *lock(&latest) = Some(Frame {
             width,
             height,
@@ -809,6 +851,7 @@ mod tests {
         let error = Arc::new(Mutex::new(None));
         let finished = Arc::new(AtomicBool::new(false));
         let paused = Arc::new(AtomicBool::new(false));
+        let frames = Arc::new(AtomicU64::new(0));
         let context = DecoderContext {
             frame_len: 4,
             width: 1,
@@ -819,6 +862,7 @@ mod tests {
             error: error.clone(),
             finished: finished.clone(),
             paused: paused.clone(),
+            frames: frames.clone(),
             stderr: Arc::new(Mutex::new(Vec::new())),
         };
         let workers = start_decoder(stdout, context).unwrap();
@@ -828,6 +872,11 @@ mod tests {
             error,
             finished,
             paused,
+            frames,
+            fps: 60,
+            duration_secs: None,
+            looped: false,
+            has_sound: false,
             workers,
             stderr_readers: Vec::new(),
             audio_monitor: None,
@@ -880,6 +929,15 @@ mod tests {
         assert_eq!(fit_size((3840, 2160), (1920, 1080)), (1920, 1080));
         assert_eq!(fit_size((96, 54), (64, 64)), (64, 36));
         assert_eq!(fit_size((1080, 1920), (1920, 1080)), (608, 1080));
+    }
+
+    #[test]
+    fn position_wraps_for_loops_and_stops_at_the_end_otherwise() {
+        assert_eq!(position_in(45, 30, Some(10.0), true), 1.5);
+        assert_eq!(position_in(30 * 25, 30, Some(10.0), true), 5.0);
+        assert_eq!(position_in(30 * 25, 30, Some(10.0), false), 10.0);
+        assert_eq!(position_in(60, 30, None, true), 2.0);
+        assert_eq!(position_in(60, 30, Some(0.0), true), 2.0);
     }
 
     #[test]

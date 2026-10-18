@@ -152,8 +152,11 @@ fn pause_and_drop_clean_up_owned_children() {
     assert!(player.is_paused());
     thread::sleep(Duration::from_millis(100)); // let an in-flight frame land
     let _ = player.take_frame();
+    let frozen = player.position_secs();
     thread::sleep(Duration::from_millis(180));
     assert!(player.take_frame().is_none(), "frames arrived while paused");
+    assert_eq!(player.position_secs(), frozen, "clock moved while paused");
+    assert!(player.duration_secs().is_some_and(|d| d > 7.0));
     player.set_paused(false).unwrap();
     assert!(!player.is_paused());
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -161,6 +164,12 @@ fn pause_and_drop_clean_up_owned_children() {
         assert!(Instant::now() < deadline, "decoder did not resume");
         thread::sleep(Duration::from_millis(10));
     }
+    while player.position_secs() <= frozen {
+        assert!(Instant::now() < deadline, "position did not advance");
+        thread::sleep(Duration::from_millis(10));
+    }
+    // Pausing is not an end or a failure.
+    assert!(!player.is_finished() && player.error().is_none());
     player.stop();
     assert!(player.is_finished());
     drop(player);

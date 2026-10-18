@@ -2,7 +2,6 @@ use crate::{MediaError, validate_file};
 use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
 use std::{
     fs::File,
-    io::BufReader,
     path::Path,
     sync::{
         Arc,
@@ -47,6 +46,8 @@ pub struct AudioPlayer {
     sink: Option<Arc<Sink>>,
     fading: Option<Arc<Sink>>,
     fade_cancel: Option<Arc<AtomicBool>>,
+    file_name: Option<String>,
+    duration: Option<Duration>,
 }
 
 impl AudioPlayer {
@@ -79,6 +80,8 @@ impl AudioPlayer {
             sink: None,
             fading: None,
             fade_cancel: None,
+            file_name: None,
+            duration: None,
         })
     }
 
@@ -91,8 +94,9 @@ impl AudioPlayer {
         validate_file(path)?;
         let file = File::open(path)
             .map_err(|e| MediaError::InvalidPath(format!("{}: {e}", path.display())))?;
-        let source = Decoder::try_from(BufReader::new(file))
+        let source = Decoder::try_from(file)
             .map_err(|e| MediaError::InvalidMedia(format!("{}: {e}", path.display())))?;
+        let duration = source.total_duration();
         self.cancel_fade();
         if let Some(old) = self.sink.take() {
             old.stop();
@@ -117,6 +121,8 @@ impl AudioPlayer {
             ));
         }
         self.sink = Some(sink);
+        self.duration = duration;
+        self.file_name = path.file_name().map(|n| n.to_string_lossy().into_owned());
         Ok(())
     }
 
@@ -146,6 +152,31 @@ impl AudioPlayer {
             sink.set_volume(volume);
         }
         Ok(())
+    }
+
+    pub fn pause(&self) {
+        if let Some(sink) = &self.sink {
+            sink.pause();
+        }
+    }
+
+    pub fn resume(&self) {
+        if let Some(sink) = &self.sink {
+            sink.play();
+        }
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.sink.as_ref().is_some_and(|sink| sink.is_paused())
+    }
+
+    /// Length of the current file, when the decoder knows it.
+    pub fn duration(&self) -> Option<Duration> {
+        self.duration
+    }
+
+    pub fn file_name(&self) -> Option<&str> {
+        self.file_name.as_deref()
     }
 
     pub fn is_playing(&self) -> bool {
@@ -212,6 +243,7 @@ impl Drop for AudioPlayer {
 #[cfg(test)]
 mod ogg_decode_tests {
     use super::*;
+    use std::io::BufReader;
     use std::process::Command;
 
     #[test]
@@ -320,6 +352,32 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(!player.is_playing(), "one second tone did not finish");
+    }
+
+    #[test]
+    fn pause_freezes_position_and_resume_continues() {
+        let Some((_dir, path)) = wav_fixture() else {
+            return;
+        };
+        let mut player = match AudioPlayer::new(None) {
+            Ok(player) => player,
+            Err(error) => {
+                eprintln!("SKIP: no audio output device: {error}");
+                return;
+            }
+        };
+        player.play(&path, AudioOptions::default()).unwrap();
+        assert_eq!(player.file_name(), Some("tone.wav"));
+        assert_eq!(player.duration(), Some(Duration::from_secs(1)));
+        std::thread::sleep(Duration::from_millis(150));
+        player.pause();
+        assert!(player.is_paused() && player.is_playing());
+        std::thread::sleep(Duration::from_millis(50));
+        let frozen = player.position();
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(player.position(), frozen);
+        player.resume();
+        assert!(!player.is_paused());
     }
 
     #[test]

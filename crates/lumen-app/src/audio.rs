@@ -2,6 +2,7 @@ use std::{
     path::PathBuf,
     sync::mpsc::{self, Receiver},
     thread,
+    time::Duration,
 };
 
 use egui::Ui;
@@ -15,11 +16,21 @@ enum PickerResult {
     Devices(Result<Vec<String>, String>),
 }
 
+/// What the now-playing strip shows for the audio cue on air.
+pub struct NowPlaying {
+    pub name: String,
+    pub elapsed: Duration,
+    pub total: Option<Duration>,
+    pub paused: bool,
+    pub volume: f32,
+}
+
 pub struct AudioState {
     player: Option<AudioPlayer>,
     pub error: String,
     bin: Vec<AudioCue>,
     volume: f32,
+    live_volume: f32,
     devices: Vec<String>,
     selected_device: Option<String>,
     pending: Option<Receiver<PickerResult>>,
@@ -33,6 +44,7 @@ impl Default for AudioState {
             error: String::new(),
             bin: Vec::new(),
             volume: 1.0,
+            live_volume: 1.0,
             devices: Vec::new(),
             selected_device: None,
             pending: None,
@@ -66,8 +78,36 @@ impl AudioState {
             Ok(()) => {
                 self.error.clear();
                 self.current_path = Some(cue.path.clone());
+                self.live_volume = cue.volume.clamp(0.0, 1.0);
             }
             Err(error) => self.error = error.to_string(),
+        }
+    }
+    pub fn now_playing(&self) -> Option<NowPlaying> {
+        let player = self.player.as_ref()?;
+        Some(NowPlaying {
+            name: player.file_name()?.to_owned(),
+            elapsed: player.position()?,
+            total: player.duration(),
+            paused: player.is_paused(),
+            volume: self.live_volume,
+        })
+    }
+    pub fn toggle_pause(&mut self) {
+        if let Some(player) = &self.player {
+            if player.is_paused() {
+                player.resume();
+            } else {
+                player.pause();
+            }
+        }
+    }
+    pub fn set_live_volume(&mut self, volume: f32) {
+        self.live_volume = volume;
+        if let Some(player) = self.player.as_mut()
+            && let Err(error) = player.set_volume(volume)
+        {
+            self.error = error.to_string();
         }
     }
     pub fn clear(&mut self) {
@@ -88,8 +128,8 @@ impl AudioState {
             if ui.button("Add audio files").clicked() && self.pending.is_none() {
                 self.start_file_picker();
             }
-            ui.add(egui::Slider::new(&mut self.volume, 0.0..=1.0).text("New file volume"));
-            if ui.button("Stop").clicked() {
+            ui.add(egui::Slider::new(&mut self.volume, 0.0..=1.0).text("Volume for added files"));
+            if ui.button("Stop audio").clicked() {
                 self.stop();
             }
         });
@@ -171,11 +211,8 @@ impl AudioState {
         {
             self.play_cue(&cue);
         }
-        if let Some(volume) = volume_change
-            && let Some(player) = self.player.as_mut()
-            && let Err(error) = player.set_volume(volume)
-        {
-            self.error = error.to_string();
+        if let Some(volume) = volume_change {
+            self.set_live_volume(volume);
         }
         if !self.device_scan_started && self.pending.is_none() {
             self.start_device_scan();
