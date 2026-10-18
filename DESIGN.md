@@ -14,18 +14,22 @@ Mode: **Operate** (impeccable). Taste dials: DESIGN_VARIANCE 3, MOTION_INTENSITY
 - **Density:** 8 pt grid; control height 28 pt (primary transport 40 pt); panel padding 12; group gap 8; section gap 20.
 - **Signature move — the saffron "up next" rail:** the next cue to go live carries a 3 pt saffron rail and a soft saffron glow in the cue grid and in the running order, so the operator always sees what Next will send. LIVE is a red pill + red outline only on the cue currently on air. Nothing else uses saffron fill except the primary "Go live" action.
 
-## Layout (Present mode, default)
+## Layout (dockable panes)
 
-Header row: project name · Prepare / Present segmented switch · output status pills (Audience, Stage, Remote) · Save state.
+The header (project name · Prepare / Present segmented switch · output status pills · Save state · File / Undo / Redo / Settings / Outputs / Shortcuts / Reset layout) and the status bar are fixed. Everything between them is a dock of six panes (egui_dock): **Running order**, **Macros**, **Preview**, **Cues**, **Live** and **Tools** (named **Inspector** in Prepare). The operator drags a pane's tab to another pane's edge to split it, onto a tab bar to stack it, and drags a separator to resize. Panes can be moved but never closed or floated, so none can be lost. Each mode keeps its own arrangement, saved in settings and restored at launch; "Reset layout" restores only the current mode. A saved layout that is damaged or missing a pane is replaced by the default with a settings notice. Tab bar: `panel`, the showing tab `text` on `raised` with a 2 pt saffron underline, other tabs `text_dim`; separators `line`, saffron while dragged; drop areas saffron at low alpha.
 
-Three regions:
-1. **Left rail (300 pt, resizable 240–520):** Search field on top (books + library + playlist, results grouped), then Running order (playlist), Library and Books (downloaded anirdesh books) tabs. The running order takes the rail's full remaining height (12 rows at 1500×949); Macros sit in a collapsible header at the bottom, collapsed in Present and open in Prepare. "New document" is a Prepare-only action.
-2. **Centre:** large Preview of the selected/on-deck cue with its label, then the cue grid (16:9 thumbnails, width-aware columns, labels below, LIVE / on-deck states).
-3. **Right column (360 pt):** Live output monitor (what the audience sees, with a red LIVE caption), transport (Previous · Next / Go live: cue · Clear · Blackout · Transition picker), a now-playing strip, then tabbed tools: Timers · Messages · Props · Audio · Stage.
+**Present, default** (today's arrangement):
+1. **Left, 22 %:** Running order, with Macros stacked as a second tab. Running order has the search field (books + library + playlist, results grouped), Running order / Library / Books tabs, and the list of documents, full height. "New document" is a Prepare-only action.
+2. **Centre:** **Preview** (58 % of the height) above **Cues**. Preview is the large picture of the selected or on-deck cue with its label (sharp: a 1280×720 still replaces the grid thumbnail within about half a second); Cues is the document heading and the grid of 16:9 thumbnails (width-aware columns, labels below, LIVE / on-deck states).
+3. **Right, 28 %:** **Live** (what the audience sees, with a red LIVE caption, transport: Previous · Next / Go live: cue · Clear · Blackout · Transition picker, and the now-playing strip) above **Tools** (Timers · Messages · Overlays · Audio · Stage; Settings open here).
+
+**Prepare, default:** Running order at the left (34 %) above Macros (25 % of its height); in the centre a small Preview (30 %) above a large Cues grid with its edit buttons; at the right (32 %) the Inspector (slide text, box, style, objects, background, audio, transition, actions, Overlays) with Live stacked as a second tab, so the transport is one click away.
+
+**Scale** (photos and videos): the Prepare inspector's Background section has a Scale choice, and the right-click menu of a cue tile or running-order row lists it under a "Scale" caption: Fit (show bars), Fill screen (crop), Stretch. On a row it applies to every photo and video in the document. It changes only the project; while that cue is live the menu says "Applies the next time it goes live." PDF and deck pages always fit.
 
 **Now-playing strip** (directly under the transport row, only while an audio cue or an unmuted video with an audio track is playing; one row per source, audio first): a 28 pt pause/resume icon button, the file name (truncated), the clock `1:23 / -2:41` (tabular figures; just `1:23` when the length is unknown) and a 28 pt stop icon button, then a 4 pt progress bar (`ok` green while playing, `text_faint` while paused). The audio row adds a volume slider bound to the live sound; the video row has none (video volume is not adjustable live, and there is no seeking). Stop fades audio over 300 ms and clears a video like Clear > Media. Pausing a video freezes picture, sound and clock; resuming continues from the same frame.
 
-Prepare mode swaps the right column's tools for the slide inspector (text, box, style, objects, background, audio, transition, actions) and enables editing affordances in the grid; transport stays visible but secondary.
+Prepare mode swaps the Tools pane for the slide inspector and enables editing affordances in the grid; the Live pane is a second tab beside it by default.
 
 ## States (every surface)
 

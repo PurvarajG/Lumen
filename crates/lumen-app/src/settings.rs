@@ -54,6 +54,15 @@ impl BookLanguage {
     }
 }
 
+/// The saved panel layouts, kept as JSON so one bad layout cannot make the whole settings file
+/// unreadable; `dock::Docks::restore` checks them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Layouts {
+    pub present: Option<serde_json::Value>,
+    pub prepare: Option<serde_json::Value>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -75,6 +84,7 @@ pub struct Settings {
     pub stage_display: Option<crate::displays::DisplayKey>,
     pub audience_fullscreen: bool,
     pub stage_fullscreen: bool,
+    pub layouts: Layouts,
     #[serde(skip)]
     pub reveal_token: bool,
 }
@@ -98,6 +108,7 @@ impl Default for Settings {
             stage_display: None,
             audience_fullscreen: false,
             stage_fullscreen: false,
+            layouts: Layouts::default(),
             reveal_token: false,
         }
     }

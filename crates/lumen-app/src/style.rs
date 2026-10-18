@@ -29,8 +29,6 @@ pub const PRIMARY: f32 = 40.0;
 pub const PADDING: i8 = 12;
 pub const GAP: f32 = 8.0;
 pub const SECTION_GAP: f32 = 20.0;
-pub const LEFT_WIDTH: f32 = 300.0;
-pub const RIGHT_WIDTH: f32 = 360.0;
 pub const ON_DECK_RAIL: f32 = 3.0;
 pub const BRAND_MARK: f32 = 28.0;
 

@@ -5,6 +5,7 @@ mod books;
 mod brand;
 mod deck;
 mod displays;
+mod dock;
 mod file;
 mod inspector;
 #[cfg(target_os = "macos")]

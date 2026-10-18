@@ -106,6 +106,7 @@ pub struct LumenApp {
     pub(super) books: crate::books::Books,
     pub(super) tool_tab: usize,
     pub(super) settings: crate::settings::Settings,
+    pub(super) docks: crate::dock::Docks,
     settings_notice: Option<String>,
     show_settings: bool,
     remote: Option<crate::remote::RemoteManager>,
@@ -153,10 +154,11 @@ impl LumenApp {
         let mut media = MediaState::default();
         media.set_repaint_context(cc.egui_ctx.clone());
         let loaded = crate::settings::settings_path().map(|p| crate::settings::Settings::load(&p));
-        let settings = loaded
+        let mut settings = loaded
             .as_ref()
             .map(|v| v.settings.clone())
             .unwrap_or_default();
+        let (docks, layout_notice) = crate::dock::Docks::restore(&mut settings.layouts);
         let remote_status = lumen_control::StatusHandle::default();
         let (remote, remote_error) =
             match crate::remote::RemoteManager::start(&settings, remote_status.clone()) {
@@ -218,7 +220,8 @@ impl LumenApp {
             books: crate::books::Books::new(&cc.egui_ctx, &settings.book_downloads),
             tool_tab: 0,
             settings,
-            settings_notice: loaded.and_then(|v| v.notice),
+            settings_notice: loaded.and_then(|v| v.notice).or(layout_notice),
+            docks,
             show_settings: false,
             remote,
             remote_status,
@@ -1071,44 +1074,6 @@ impl eframe::App for LumenApp {
         self.shortcuts(ctx);
         self.recovery_banner(ctx);
         self.toolbar(ctx);
-        egui::SidePanel::left("library")
-            .default_width(crate::style::LEFT_WIDTH)
-            .width_range(240.0..=520.0)
-            .resizable(true)
-            .frame(crate::style::panel_frame())
-            .show(ctx, |ui| crate::panels::library(self, ui));
-        egui::SidePanel::right("inspector")
-            .default_width(crate::style::RIGHT_WIDTH)
-            .width_range(330.0..=460.0)
-            .resizable(true)
-            .frame(crate::style::panel_frame())
-            .show(ctx, |ui| {
-                if self.show_settings {
-                    if ui.button("Close settings").clicked() {
-                        self.show_settings = false;
-                    }
-                    if let Ok(cache) = self.text_images.lock() {
-                        ui.label(cache.font_notice());
-                    }
-                    let action = crate::settings::settings_panel(
-                        ui,
-                        &mut self.settings,
-                        &self.project,
-                        self.settings_notice.as_deref(),
-                    );
-                    if action.changed && self.settings.validate().is_ok() {
-                        self.persist_settings();
-                    }
-                    if action.restart_requested && self.settings.validate().is_ok() {
-                        self.restart_remote();
-                    }
-                    if !self.remote_error.is_empty() {
-                        ui.colored_label(crate::style::WARN, &self.remote_error);
-                    }
-                } else {
-                    crate::panels::inspector(self, ui);
-                }
-            });
         egui::TopBottomPanel::bottom("status")
             .exact_height(26.0)
             .show(ctx, |ui| {
@@ -1145,13 +1110,7 @@ impl eframe::App for LumenApp {
                     }
                 });
             });
-        egui::CentralPanel::default()
-            .frame(
-                egui::Frame::new()
-                    .fill(crate::style::CANVAS)
-                    .inner_margin(crate::style::PADDING),
-            )
-            .show(ctx, |ui| crate::panels::slides(self, ui));
+        self.show_docks(ctx);
         if self.modal || self.active_save.is_some() {
             self.unsaved_modal(ctx)
         }
@@ -1218,6 +1177,7 @@ impl eframe::App for LumenApp {
         }
     }
     fn on_exit(&mut self) {
+        self.save_layouts_now();
         self.remove_clean_recovery();
         self.audio.stop();
         self.deck.reconcile(None);
@@ -1353,6 +1313,34 @@ impl LumenApp {
     fn remove_selected(&mut self) {
         if let Some(index) = self.selected_item() {
             self.remove_item(index);
+        }
+    }
+    /// The Tools pane: Settings while they are open, otherwise the mode's tools.
+    pub(super) fn tools_pane(&mut self, ui: &mut egui::Ui) {
+        if !self.show_settings {
+            crate::panels::tools(self, ui);
+            return;
+        }
+        if ui.button("Close settings").clicked() {
+            self.show_settings = false;
+        }
+        if let Ok(cache) = self.text_images.lock() {
+            ui.label(cache.font_notice());
+        }
+        let action = crate::settings::settings_panel(
+            ui,
+            &mut self.settings,
+            &self.project,
+            self.settings_notice.as_deref(),
+        );
+        if action.changed && self.settings.validate().is_ok() {
+            self.persist_settings();
+        }
+        if action.restart_requested && self.settings.validate().is_ok() {
+            self.restart_remote();
+        }
+        if !self.remote_error.is_empty() {
+            ui.colored_label(crate::style::WARN, &self.remote_error);
         }
     }
     fn toolbar(&mut self, ctx: &Context) {
@@ -1505,6 +1493,13 @@ impl LumenApp {
                     });
                     if ui.button("Shortcuts").clicked() {
                         self.show_help = !self.show_help;
+                    }
+                    if ui
+                        .button("Reset layout")
+                        .on_hover_text("Puts this mode's panels back where they started")
+                        .clicked()
+                    {
+                        self.docks.reset(self.present);
                     }
                 });
             });

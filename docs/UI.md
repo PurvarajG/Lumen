@@ -6,7 +6,7 @@ The seeded design exercise selected an editorial split and Satoshi. The shipped 
 
 - Fixed dark graphite palette, warm white text, pale green selection/Go Live, coral live state.
 - Project identity and file/output controls occupy two clear header rows.
-- Running order, document library and macros share the left rail.
+- The workbench is a dock of six panes (Running order, Macros, Preview, Cues, Live, Tools) that the operator can rearrange; each mode keeps its own layout. See DESIGN.md.
 - A large selected-cue preview leads the central workspace. The thumbnail grid uses consistent 16:9 geometry and width-aware columns, including one column in narrow space.
 - Audience preview and transport remain visible above the inspector. Edit slide and Stage tools switch the lower panel so controls do not compete for height.
 - Selected previews and editable thumbnails can differ from the detached live snapshot. Live borders identify the cue that was triggered; they do not imply that subsequent edits are already on air.

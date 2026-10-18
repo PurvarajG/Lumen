@@ -6,7 +6,8 @@ use lumen_core::{
 };
 use uuid::Uuid;
 
-pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
+/// The running-order pane: search, the three tabs, the document rows.
+pub fn running_order(app: &mut LumenApp, ui: &mut egui::Ui) {
     // The rail is a dense list; 4 pt between its controls gives the running order the room.
     ui.spacing_mut().item_spacing.y = style::GAP / 2.0;
     if crate::books::search_field(app, ui) {
@@ -31,16 +32,12 @@ pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
     if order {
         add_header(app, ui, !docs.is_empty());
     }
-    // Macros stay one header tall in Present so the running order gets the rail's height.
-    // Each mode keeps its own open state, defaulting to open only in Prepare.
-    let macros_salt = ("macros", app.present);
-    let macros_open = egui::collapsing_header::CollapsingState::load_with_default_open(
-        ui.ctx(),
-        ui.make_persistent_id(egui::Id::new(macros_salt)),
-        !app.present,
-    )
-    .is_open();
-    let reserve = bottom_reserve(app.present, macros_open);
+    // The list fills the pane; Prepare keeps one control row below it for "New document".
+    let reserve = if app.present {
+        0.0
+    } else {
+        style::CONTROL + style::GAP
+    };
     if order && docs.is_empty() {
         empty_running_order(app, ui);
     } else {
@@ -59,27 +56,10 @@ pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
         append_playlist_item(&mut app.project, id);
         app.mark();
     }
-    ui.separator();
-    egui::CollapsingHeader::new(RichText::new("Macros").size(style::HEADING).strong())
-        .id_salt(macros_salt)
-        .default_open(!app.present)
-        .show(ui, |ui| macros_body(app, ui));
 }
 
-/// Height kept below the running-order list for "New document" and the Macros header,
-/// or the open Macros list.
-fn bottom_reserve(present: bool, macros_open: bool) -> f32 {
-    let header = style::CONTROL + style::GAP;
-    let new_document = if present { 0.0 } else { header };
-    let separator = style::GAP;
-    if macros_open {
-        210.0
-    } else {
-        new_document + separator + header
-    }
-}
-
-fn macros_body(app: &mut LumenApp, ui: &mut egui::Ui) {
+/// The macros pane: one button per macro, with its action editor in Prepare.
+pub fn macros(app: &mut LumenApp, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical()
         .id_salt("macros")
         .show(ui, |ui| {
@@ -487,7 +467,8 @@ fn append_playlist_item(project: &mut Project, document_id: Uuid) -> bool {
     true
 }
 
-pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
+/// The big Preview of the selected cue, its label and notes.
+pub fn preview(app: &mut LumenApp, ui: &mut egui::Ui) {
     if crate::books::preview_panel(app, ui) {
         return;
     }
@@ -524,7 +505,7 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
             .zip(next.as_ref())
             .is_some_and(|(p, n)| (p.document_id, p.slide.id) == (n.document_id, n.slide.id));
     ui.heading(if up_next { "Up next" } else { "Preview" });
-    let height = preview_height(ui.available_width(), ui.available_height());
+    let height = preview_pane_height(ui.available_width(), ui.available_height());
     // One snapshot per call; cloning the map per tile was O(tiles x thumbnails).
     let images = app.thumbnails.images();
     let small = preview
@@ -585,6 +566,33 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
         crate::text::gu_label(ui, notes, style::CAPTION);
     }
     ui.small("Edits stay in preview until triggered.");
+}
+
+/// The document heading, its edit buttons (Prepare) and the grid of cue thumbnails.
+pub fn cues(app: &mut LumenApp, ui: &mut egui::Ui) {
+    if crate::books::has_preview(app) {
+        ui.label(
+            RichText::new(
+                "A book passage is being previewed. Add it to the running order to see its cues.",
+            )
+            .color(style::TEXT_DIM),
+        );
+        return;
+    }
+    let Some(index) = app
+        .project
+        .documents
+        .iter()
+        .position(|d| d.id == app.selected_doc)
+    else {
+        return;
+    };
+    if app.project.documents[index].slides.is_empty() {
+        return;
+    }
+    let preview = app.selected_live();
+    let next = app.runtime.peek_next(&app.project);
+    let images = app.thumbnails.images();
     ui.horizontal_wrapped(|ui| {
         crate::text::gu_label(
             ui,
@@ -870,10 +878,20 @@ fn set_fit(app: &mut LumenApp, document_id: Uuid, slide: Option<Uuid>, fit: Medi
     }
 }
 
-pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
+/// The LIVE monitor, the transport row, the transition picker and the now-playing strip.
+pub fn live(app: &mut LumenApp, ui: &mut egui::Ui) {
+    let pane_height = ui.available_height();
+    egui::ScrollArea::vertical()
+        .id_salt("live")
+        .auto_shrink([false, false])
+        .show(ui, |ui| live_body(app, ui, pane_height));
+}
+
+fn live_body(app: &mut LumenApp, ui: &mut egui::Ui, pane_height: f32) {
     ui.colored_label(style::LIVE, RichText::new("LIVE").strong());
     let width = ui.available_width();
-    let height = width * 9.0 / 16.0;
+    // A wide pane must not push the transport row out of sight.
+    let height = (width * 9.0 / 16.0).min(pane_height * 0.55);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
     if app.runtime.output.deck.is_some() {
         ui.put(
@@ -966,7 +984,10 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
         }
     });
     crate::transport::now_playing(app, ui);
-    ui.separator();
+}
+
+/// Present: the tool tabs. Prepare: the slide inspector and Overlays.
+pub fn tools(app: &mut LumenApp, ui: &mut egui::Ui) {
     if !app.present {
         let mut selected = app.selected_live();
         let mut changed = false;
@@ -1082,6 +1103,11 @@ fn grid_layout(available: f32, gap: f32) -> (usize, f32) {
         columns,
         (available - gap * (columns - 1) as f32).max(1.0) / columns as f32,
     )
+}
+
+/// The Preview pane has the label, notes and hint below the picture, and nothing else.
+fn preview_pane_height(width: f32, height: f32) -> f32 {
+    (width * 9.0 / 16.0).min((height - 72.0).max(80.0))
 }
 
 // Reserve one thumbnail row, its label and document controls below the preview.
@@ -1228,8 +1254,15 @@ mod tests {
         }
     }
     #[test]
-    fn preview_fills_small_console_and_reserves_one_grid_row() {
-        let width = 1100.0 - style::LEFT_WIDTH - style::RIGHT_WIDTH - 48.0;
+    fn preview_pane_fills_its_width_and_leaves_room_for_its_label() {
+        assert!((preview_pane_height(800.0, 900.0) * 16.0 / 9.0 - 800.0).abs() < 0.1);
+        assert!(preview_pane_height(800.0, 400.0) + 72.0 <= 400.0 + 0.1);
+        // A very short pane still shows a usable picture.
+        assert_eq!(preview_pane_height(800.0, 20.0), 80.0);
+    }
+    #[test]
+    fn book_preview_keeps_one_grid_row_free() {
+        let width = 1100.0 - 300.0 - 360.0 - 48.0;
         let height = 700.0 - 130.0;
         assert!((preview_height(width, height) * 16.0 / 9.0 - width).abs() < 0.1);
         for width in [width, 700.0, 1100.0] {
@@ -1244,12 +1277,6 @@ mod tests {
             assert!(n >= 1);
             assert!((w * n as f32 + (n - 1) as f32 * 8.0 - available).abs() < 0.01);
         }
-    }
-    #[test]
-    fn running_order_keeps_its_height_for_macros_only_when_open() {
-        assert!(bottom_reserve(true, false) < bottom_reserve(false, false));
-        assert!(bottom_reserve(false, false) < bottom_reserve(true, true));
-        assert_eq!(bottom_reserve(true, true), bottom_reserve(false, true));
     }
     #[test]
     fn preview_uses_live_frames_only_for_the_on_air_background() {
