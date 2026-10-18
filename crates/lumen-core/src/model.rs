@@ -169,6 +169,13 @@ pub struct Project {
     pub props: Vec<Prop>,
     #[serde(default)]
     pub messages: Vec<MessageTemplate>,
+    /// Show-wide transition; a slide's own `Cut` means "use this".
+    #[serde(default = "default_show_transition")]
+    pub transition: Transition,
+}
+
+fn default_show_transition() -> Transition {
+    Transition::Fade { millis: 400 }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -503,6 +510,8 @@ impl Project {
             }
         }
 
+        check_transition(&self.transition)?;
+
         // Theme font sizes
         for theme in &self.themes {
             if !theme.font_size.is_finite() || !(8.0..=400.0).contains(&theme.font_size) {
@@ -525,16 +534,7 @@ impl Project {
                 validate_actions(&slide.actions, format!("slide {}", slide.id))?;
                 self.validate_action_refs(&slide.actions)?;
 
-                match slide.transition {
-                    Transition::Fade { millis }
-                    | Transition::FadeThroughBlack { millis }
-                    | Transition::Push { millis, .. }
-                        if millis > 10000 =>
-                    {
-                        return Err(CoreError::InvalidTransition(millis));
-                    }
-                    _ => {}
-                }
+                check_transition(&slide.transition)?;
                 if let Background::Pdf { path, page } = &slide.background {
                     if *page == 0 {
                         return Err(CoreError::InvalidPdfPage(*page));
@@ -798,6 +798,7 @@ impl Project {
             timers: vec![default_timer],
             props: Vec::new(),
             messages: Vec::new(),
+            transition: default_show_transition(),
         }
     }
 }
@@ -805,6 +806,19 @@ impl Project {
 // ---------------------------------------------------------------------------
 // Validation helpers
 // ---------------------------------------------------------------------------
+
+fn check_transition(transition: &Transition) -> Result<(), CoreError> {
+    match *transition {
+        Transition::Fade { millis }
+        | Transition::FadeThroughBlack { millis }
+        | Transition::Push { millis, .. }
+            if millis > 10000 =>
+        {
+            Err(CoreError::InvalidTransition(millis))
+        }
+        _ => Ok(()),
+    }
+}
 
 pub(crate) fn validate_actions(actions: &[CueAction], owner: String) -> Result<(), CoreError> {
     if actions

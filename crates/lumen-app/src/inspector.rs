@@ -146,9 +146,9 @@ pub fn slide(ui: &mut egui::Ui, slide: &mut Slide, project: &mut Project) -> boo
             Transition::Push { .. } => 3,
         };
         egui::ComboBox::from_id_salt("transition-kind")
-            .selected_text(["Cut", "Fade", "Fade through black", "Push"][kind])
+            .selected_text(["Show default", "Fade", "Fade through black", "Push"][kind])
             .show_ui(ui, |ui| {
-                for (i, n) in ["Cut", "Fade", "Fade through black", "Push"]
+                for (i, n) in ["Show default", "Fade", "Fade through black", "Push"]
                     .iter()
                     .enumerate()
                 {

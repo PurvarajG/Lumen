@@ -16,6 +16,20 @@ pub struct OutputTransition {
     pub previous_media: Option<TextureHandle>,
     pub started: Instant,
     pub kind: Transition,
+    /// Holds the previous picture (progress 0) until the new media has a frame.
+    pub waiting_for_media: bool,
+}
+
+impl OutputTransition {
+    pub fn progress(&self) -> f32 {
+        if self.waiting_for_media {
+            return 0.0;
+        }
+        transition_progress(transition_millis(&self.kind), self.started.elapsed())
+    }
+    pub fn is_active(&self) -> bool {
+        self.waiting_for_media || self.progress() < 1.0
+    }
 }
 
 struct Scene<'a> {
@@ -122,6 +136,7 @@ pub fn transition_progress(millis: u32, elapsed: Duration) -> f32 {
 
 pub fn transition_frame(kind: &Transition, t: f32) -> (f32, f32, Vec2, Vec2) {
     let t = t.clamp(0.0, 1.0);
+    let t = t * t * (3.0 - 2.0 * t);
     match kind {
         Transition::Cut => (0.0, 1.0, Vec2::ZERO, Vec2::ZERO),
         Transition::Fade { .. } => (1.0 - t, t, Vec2::ZERO, Vec2::ZERO),
@@ -434,23 +449,17 @@ pub fn paint_audience(
     transition: Option<&OutputTransition>,
     images: &HashMap<PathBuf, TextureHandle>,
 ) {
-    let active_transition = transition.filter(|transition| {
-        !matches!(&transition.kind, Transition::Cut)
-            && transition_progress(
-                transition_millis(&transition.kind),
-                transition.started.elapsed(),
-            ) < 1.0
-    });
-    if let Some(transition) = active_transition {
-        let progress = transition_progress(
-            transition_millis(&transition.kind),
-            transition.started.elapsed(),
-        );
+    if let Some(transition) = transition.filter(|t| t.is_active()) {
+        // A waiting Cut still holds the old picture, so it paints as a zero-length fade.
+        let kind = match &transition.kind {
+            Transition::Cut => &Transition::Fade { millis: 0 },
+            kind => kind,
+        };
         paint_transition_layers(
             ui,
             rect,
-            &transition.kind,
-            progress,
+            kind,
+            transition.progress(),
             &transition.previous,
             transition.previous_media.as_ref(),
             output,
@@ -476,7 +485,7 @@ pub fn paint_audience(
     paint_decorations(ui, rect, output, project, runtime, now, images);
 }
 
-fn transition_millis(kind: &Transition) -> u32 {
+pub fn transition_millis(kind: &Transition) -> u32 {
     match kind {
         Transition::Cut => 0,
         Transition::Fade { millis }
@@ -701,11 +710,75 @@ mod tests {
     }
 
     #[test]
+    fn waiting_transition_holds_the_previous_scene_even_for_cut() {
+        let mut project = Project::demo();
+        let red = Color32::from_rgb(255, 0, 0);
+        let blue = Color32::from_rgb(0, 0, 255);
+        project.documents[0].slides[0].background = Background::Solid([255, 0, 0, 255]);
+        project.documents[0].slides[1].background = Background::Solid([0, 0, 255, 255]);
+        let (doc, first, second) = (
+            project.documents[0].id,
+            project.documents[0].slides[0].id,
+            project.documents[0].slides[1].id,
+        );
+        let mut runtime = Runtime::default();
+        runtime.trigger(&project, doc, first).unwrap();
+        let previous = runtime.output.clone();
+        runtime.trigger(&project, doc, second).unwrap();
+        let transition = OutputTransition {
+            previous,
+            previous_media: None,
+            started: Instant::now() - Duration::from_secs(5),
+            kind: Transition::Cut,
+            waiting_for_media: true,
+        };
+        assert!(transition.is_active());
+        assert_eq!(transition.progress(), 0.0);
+        let ctx = egui::Context::default();
+        let frame = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                paint_audience(
+                    ui,
+                    Rect::from_min_size(Pos2::ZERO, Vec2::new(640.0, 360.0)),
+                    &runtime.output,
+                    &project,
+                    &runtime,
+                    0,
+                    None,
+                    Some(&transition),
+                    &HashMap::new(),
+                );
+            });
+        });
+        let fills: Vec<Color32> = frame
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Rect(r) => Some(r.fill),
+                _ => None,
+            })
+            .collect();
+        assert!(fills.contains(&red), "previous scene must be fully painted");
+        assert!(
+            !fills.contains(&blue),
+            "next scene must be invisible while waiting"
+        );
+        let released = OutputTransition {
+            waiting_for_media: false,
+            ..transition
+        };
+        assert!(!released.is_active());
+    }
+
+    #[test]
     fn transition_layers_are_normalized_and_clamped() {
         let (old, new, old_offset, new_offset) =
             transition_frame(&Transition::Fade { millis: 500 }, 0.25);
-        assert!((old - 0.75).abs() < 0.001);
-        assert!((new - 0.25).abs() < 0.001);
+        // smoothstep(0.25) = 0.15625
+        assert!((old - 0.84375).abs() < 0.001);
+        assert!((new - 0.15625).abs() < 0.001);
+        let (_, mid, _, _) = transition_frame(&Transition::Fade { millis: 500 }, 0.5);
+        assert!((mid - 0.5).abs() < 0.001);
         assert_eq!(old_offset, Vec2::ZERO);
         assert_eq!(new_offset, Vec2::ZERO);
         assert_eq!(transition_frame(&Transition::Cut, -1.0).0, 0.0);

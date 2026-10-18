@@ -1255,6 +1255,7 @@ mod tests {
             timers: vec![],
             props: vec![],
             messages: vec![],
+            transition: lumen_core::Transition::Cut,
         }
     }
     fn fixture() -> Book {

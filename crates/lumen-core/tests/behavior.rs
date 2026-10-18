@@ -25,6 +25,7 @@ fn project_with_docs(docs: Vec<Document>, theme: Theme) -> Project {
         }],
         props: vec![],
         messages: vec![],
+        transition: lumen_core::Transition::Cut,
     }
 }
 fn doc(name: &str, theme: Uuid, labels: &[&str]) -> Document {

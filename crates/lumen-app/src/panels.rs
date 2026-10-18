@@ -1,6 +1,6 @@
 use crate::{app::LumenApp, render, style};
 use egui::{self, RichText, Vec2};
-use lumen_core::{CueAction, Document, Macro, PlaylistItem, Project, Slide};
+use lumen_core::{CueAction, Document, Macro, PlaylistItem, Project, Slide, Transition};
 use uuid::Uuid;
 
 pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
@@ -741,7 +741,7 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
             }
         }
     });
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.menu_button("Clear", |ui| {
             for (n, name) in [
                 (1, "All"),
@@ -769,7 +769,10 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
             if blackout { style::LIVE } else { style::LINE },
         ));
         if ui.add(blackout_button).clicked() {
-            app.runtime.output.blackout = !app.runtime.output.blackout;
+            app.apply_actions(&[CueAction::Blackout(!blackout)]);
+        }
+        if transition_picker(ui, &mut app.project.transition) {
+            app.mark();
         }
         if app.runtime.output.blackout {
             ui.colored_label(style::LIVE, "Output is blacked out");
@@ -881,6 +884,87 @@ fn grid_layout(available: f32, gap: f32) -> (usize, f32) {
 pub fn preview_height(width: f32, height: f32) -> f32 {
     let (_, thumb_width) = grid_layout(width, style::GAP);
     (width * 9.0 / 16.0).min((height - thumb_width * 9.0 / 16.0 - 122.0).max(80.0))
+}
+
+const TRANSITION_KINDS: [&str; 4] = ["Cut", "Fade", "Fade through black", "Push left"];
+const DEFAULT_SHOW_FADE_MS: u32 = 400;
+
+fn transition_parts(transition: &Transition) -> (usize, u32) {
+    match transition {
+        Transition::Cut => (0, DEFAULT_SHOW_FADE_MS),
+        Transition::Fade { millis } => (1, *millis),
+        Transition::FadeThroughBlack { millis } => (2, *millis),
+        Transition::Push { millis, .. } => (3, *millis),
+    }
+}
+
+fn transition_from_parts(kind: usize, millis: u32) -> Transition {
+    match kind {
+        0 => Transition::Cut,
+        1 => Transition::Fade { millis },
+        2 => Transition::FadeThroughBlack { millis },
+        _ => Transition::Push {
+            millis,
+            direction: lumen_core::PushDirection::Left,
+        },
+    }
+}
+
+/// Show-wide transition picker for Present. Returns true when the value changed.
+fn transition_picker(ui: &mut egui::Ui, transition: &mut Transition) -> bool {
+    let before = transition_parts(transition);
+    let (mut kind, mut millis) = before;
+    let summary = if kind == 0 {
+        "Transition: Cut".to_string()
+    } else {
+        format!(
+            "Transition: {} {} s",
+            TRANSITION_KINDS[kind],
+            millis as f32 / 1000.0
+        )
+    };
+    egui::ComboBox::from_id_salt("show-transition")
+        .selected_text(summary)
+        .show_ui(ui, |ui| {
+            for (i, name) in TRANSITION_KINDS.iter().enumerate() {
+                ui.selectable_value(&mut kind, i, *name);
+            }
+            ui.separator();
+            ui.add_enabled_ui(kind != 0, |ui| {
+                ui.horizontal(|ui| {
+                    for ms in [250, 500, 1000] {
+                        ui.selectable_value(&mut millis, ms, format!("{} s", ms as f32 / 1000.0));
+                    }
+                });
+            });
+        });
+    if (kind, millis) == before {
+        return false;
+    }
+    *transition = transition_from_parts(kind, millis);
+    true
+}
+
+#[cfg(test)]
+mod transition_picker_tests {
+    use super::*;
+
+    #[test]
+    fn picker_parts_round_trip_and_cut_keeps_a_default_duration() {
+        for t in [
+            Transition::Fade { millis: 250 },
+            Transition::FadeThroughBlack { millis: 1000 },
+            Transition::Push {
+                millis: 500,
+                direction: lumen_core::PushDirection::Left,
+            },
+        ] {
+            let (kind, millis) = transition_parts(&t);
+            assert_eq!(transition_from_parts(kind, millis), t);
+        }
+        assert_eq!(transition_parts(&Transition::Cut), (0, 400));
+        assert_eq!(transition_from_parts(0, 400), Transition::Cut);
+    }
 }
 
 #[cfg(test)]

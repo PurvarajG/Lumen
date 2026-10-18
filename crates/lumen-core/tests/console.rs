@@ -82,3 +82,14 @@ fn warning_threshold_is_backward_compatible_and_validated() {
     p.timers[0].warn_at_secs = Some(30.0);
     p.validate().unwrap();
 }
+
+#[test]
+fn show_transition_defaults_to_fade_and_is_validated() {
+    let mut json = serde_json::to_value(Project::demo()).unwrap();
+    json.as_object_mut().unwrap().remove("transition");
+    let mut p: Project = serde_json::from_value(json).unwrap();
+    assert_eq!(p.transition, Transition::Fade { millis: 400 });
+    p.validate().unwrap();
+    p.transition = Transition::Fade { millis: 10001 };
+    assert!(p.validate().is_err());
+}

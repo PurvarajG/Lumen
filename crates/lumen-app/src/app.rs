@@ -1,3 +1,4 @@
+use crate::render::transition_millis;
 use crate::{
     file::{self, FileAction, FileResult},
     media::MediaState,
@@ -14,6 +15,8 @@ use std::{
     time::Instant,
 };
 use uuid::Uuid;
+
+const MEDIA_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
 
 #[derive(Clone, Default)]
 pub struct Published {
@@ -835,7 +838,10 @@ impl LumenApp {
                     }
                 }
                 Shortcut::Clear(n) => self.clear_layer(n),
-                Shortcut::Blackout => self.runtime.output.blackout = !self.runtime.output.blackout,
+                Shortcut::Blackout => {
+                    self.transition = None;
+                    self.runtime.output.blackout = !self.runtime.output.blackout;
+                }
                 Shortcut::Search => self.focus_search = true,
                 Shortcut::Undo => self.undo(false),
                 Shortcut::Redo => self.undo(true),
@@ -945,12 +951,15 @@ impl eframe::App for LumenApp {
         for event in events {
             self.control(event.command);
         }
-        if self.transition.as_ref().is_some_and(|t| {
-            t.started.elapsed().as_millis() >= u128::from(transition_millis(&t.kind))
-        }) {
+        if self
+            .transition
+            .as_ref()
+            .is_some_and(|t| !t.waiting_for_media && !t.is_active())
+        {
             self.transition = None;
         }
         self.media.poll(ctx);
+        self.release_media_wait();
         self.sync_deck();
         while let Some(result) = self.deck.poll() {
             if let Err(error) = result {
@@ -1834,6 +1843,31 @@ impl LumenApp {
     fn sync_deck(&mut self) {
         self.deck.reconcile(self.runtime.output.deck.clone());
     }
+    /// Starts the fade once the new media has a frame, or after 1.5 s so a bad file can't freeze the picture.
+    fn release_media_wait(&mut self) {
+        let ready = (self.media.image_texture.is_some() && !self.media.pending)
+            || (!self.media.pending && self.media.player.is_none());
+        if let Some(t) = self.transition.as_mut().filter(|t| t.waiting_for_media)
+            && (ready || t.started.elapsed() >= MEDIA_WAIT)
+        {
+            t.started = Instant::now();
+            t.waiting_for_media = false;
+        }
+    }
+    /// True when the live cue needs a background that is not on screen yet.
+    fn live_media_will_load(&self) -> bool {
+        let output = &self.runtime.output;
+        let background = output.effective_background();
+        !output.media_cleared
+            && matches!(
+                background,
+                Some(Background::Video { .. } | Background::Image { .. })
+            )
+            && (self.media.pending
+                || self.media.image_texture.is_none()
+                || self.media.background_requires_reload(background)
+                || self.media.restart_on_trigger(background))
+    }
     fn after_trigger(&mut self, previous: OutputState, previous_media: Option<TextureHandle>) {
         if self.runtime.output.live.as_ref().is_some_and(|l| {
             l.slide
@@ -1845,18 +1879,20 @@ impl LumenApp {
         }
         self.sync_deck();
         if let Some(live) = &self.runtime.output.live {
-            let kind = live.slide.transition.clone();
-            self.transition = if transition_millis(&kind) == 0 {
-                None
-            } else {
-                Some(crate::render::OutputTransition {
+            let kind = effective_transition(&self.project.transition, &live.slide.transition);
+            let audio = live.slide.audio.clone();
+            // Even a Cut holds the old picture until the new media is ready (no black flash).
+            let waiting_for_media = self.live_media_will_load();
+            self.transition = (transition_millis(&kind) > 0 || waiting_for_media).then(|| {
+                crate::render::OutputTransition {
                     previous,
                     previous_media,
                     started: Instant::now(),
                     kind,
-                })
-            };
-            if let Some(cue) = &live.slide.audio {
+                    waiting_for_media,
+                }
+            });
+            if let Some(cue) = &audio {
                 self.audio.play_cue(cue);
             }
         }
@@ -1883,6 +1919,13 @@ impl LumenApp {
         }
     }
     pub(super) fn apply_actions(&mut self, actions: &[lumen_core::CueAction]) {
+        // Blackout is a safety action: it never eases.
+        if actions
+            .iter()
+            .any(|a| matches!(a, lumen_core::CueAction::Blackout(_)))
+        {
+            self.transition = None;
+        }
         if let Err(e) = self.runtime.apply_actions(&self.project, actions) {
             self.error = e.to_string();
         }
@@ -1908,8 +1951,17 @@ impl LumenApp {
             5 => CueAction::ClearAudio,
             _ => CueAction::ClearMessages,
         };
-        self.transition = None;
+        let previous = self.runtime.output.clone();
+        let previous_media = self.media.image_texture.clone();
         self.apply_actions(&[action]);
+        let kind = self.project.transition.clone();
+        self.transition = (transition_millis(&kind) > 0).then(|| crate::render::OutputTransition {
+            previous,
+            previous_media,
+            started: Instant::now(),
+            kind,
+            waiting_for_media: false,
+        });
     }
     fn sync_audio_clear(&mut self) {
         if self.audio_seen_serial != self.runtime.output.audio_clear_serial {
@@ -2105,12 +2157,14 @@ impl LumenApp {
     }
 }
 
-fn transition_millis(kind: &lumen_core::Transition) -> u32 {
-    match kind {
-        lumen_core::Transition::Cut => 0,
-        lumen_core::Transition::Fade { millis }
-        | lumen_core::Transition::FadeThroughBlack { millis }
-        | lumen_core::Transition::Push { millis, .. } => *millis,
+// shortcut: per-slide Cut = show default, so one slide can't force a hard cut while the show fades; add Option<Transition> if operators ask.
+fn effective_transition(
+    show: &lumen_core::Transition,
+    slide: &lumen_core::Transition,
+) -> lumen_core::Transition {
+    match slide {
+        lumen_core::Transition::Cut => show.clone(),
+        own => own.clone(),
     }
 }
 
@@ -2123,6 +2177,17 @@ mod console_safety_tests {
         assert!(recovery_is_obsolete(1, 1, 10, 11, false));
         assert!(recovery_is_obsolete(1, 1, 12, 11, true));
         assert!(!recovery_is_obsolete(1, 1, 12, 11, false));
+    }
+    #[test]
+    fn slide_cut_uses_show_transition_and_other_kinds_override() {
+        use lumen_core::Transition::{Cut, Fade, Push};
+        let show = Fade { millis: 400 };
+        assert_eq!(effective_transition(&show, &Cut), show);
+        let push = Push {
+            millis: 300,
+            direction: lumen_core::PushDirection::Left,
+        };
+        assert_eq!(effective_transition(&show, &push), push);
     }
     #[test]
     fn transition_duration_matches_every_kind() {
