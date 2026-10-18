@@ -173,7 +173,7 @@ Lumen accepts MIDI Note-On events (`0x90..=0x9F`, `velocity > 0`) on any configu
 - `crates/lumen-control`: Remote control listeners (HTTP JSON API, OSC over UDP, MIDI input).
 - `crates/lumen-interchange`: OpenLyrics XML import/export and ProPresenter document text extraction.
 - `crates/lumen-library`: anirdesh.com book downloader, HTML parser, in-memory search index, and slide generator.
-- `crates/lumen-app`: Native macOS operator workbench and presentation windows built with `eframe`/`egui` and `wgpu`.
+- `crates/lumen-app`: Native macOS operator workbench and presentation windows built with `eframe`/`egui` and `wgpu`; the movable panels use `egui_dock` (MIT, pinned to 0.18.0 for egui 0.33).
 
 ### Building and Verification
 ```sh
