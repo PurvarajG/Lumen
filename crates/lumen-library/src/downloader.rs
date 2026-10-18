@@ -591,9 +591,14 @@ fn build_download_plan(book_id: &str) -> Result<Vec<PlanItem>, LibraryError> {
             }
         }
         "kirtan" => {
-            // Part sizes as published on anirdesh.com (a number past the end serves the landing page).
-            for (part, count) in [(1, 1101), (2, 1429), (3, 299)] {
-                for no in 1..=count {
+            // Number ranges as published on anirdesh.com: part 2 skips 337..=1000 and 1163, and a number the
+            // site does not have serves its landing page (skipped at download time as a safety net).
+            for (part, numbers) in [
+                (1, vec![1..=1101]),
+                (2, vec![1..=336, 1001..=1162, 1164..=1429]),
+                (3, vec![1..=299]),
+            ] {
+                for no in numbers.into_iter().flatten() {
                     let key = format!("{part}-{no}");
                     let url =
                         format!("https://www.anirdesh.com/kirtan/index.php?part={part}&no={no}");
@@ -874,12 +879,7 @@ mod tests {
     fn download_plans_match_the_catalog_unit_counts() {
         for info in catalog() {
             let plan = build_download_plan(info.id).expect(info.id);
-            // Kirtan numbers have gaps the plan cannot know about; it is an upper bound.
-            if info.id == "kirtan" {
-                assert!(plan.len() >= info.units, "{}", info.id);
-            } else {
-                assert_eq!(plan.len(), info.units, "{}", info.id);
-            }
+            assert_eq!(plan.len(), info.units, "{}", info.id);
         }
     }
 }

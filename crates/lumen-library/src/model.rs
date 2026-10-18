@@ -31,8 +31,8 @@ pub const CATALOG: &[BookInfo] = &[
         id: "kirtan",
         title_gu: "કીર્તન મુક્તાવલી",
         title_en: "Kirtan Muktavali",
-        units: 2829,
-        pages: 2829,
+        units: 2164,
+        pages: 2164,
     },
     BookInfo {
         id: "diksha",
