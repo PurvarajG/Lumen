@@ -139,3 +139,7 @@ Tip for the operator: a 75 Hz projector can never show 30 fps evenly; the best i
 - **Not verified by hand:** the audience at 60 Hz and 25 fps content beyond the cadence runs above; the undo step and the inspector `Scale` combo of G2.3; a pause/resume of a video through the UI (unit tests cover it); dropping a panel onto a tab bar to stack it (only an edge split was driven); the laptop-only 120 Hz case, where 30 fps video lands at exactly 4 refreshes in only 48–81% of pictures (the old code: 44–56%).
 - **Known gaps:** no show-wide fit default and no fit option in Add files; PDF and deck pages always fit; no floating panel windows; the console repaints at about 60 Hz instead of 120 Hz while the audience plays video (deliberate, see G2.1); the video clock is not phase-locked to the display, so a 30 fps clip on a 75 Hz output still has an occasional 1/4-refresh split near the display's drift.
 - Version 1.0.0-rc.5. Package: `scripts/package-macos.sh --release` → `.local/dist/Lumen-Presenter-1.0.0-rc.5-macos-arm64.dmg`.
+
+### App icon in every launch mode (after rc.5)
+
+The Dock and window icon was only set by the packaged bundle's `AppIcon.icns`, so a raw `lumen` binary (dev and QA runs) showed none. `main.rs` now passes the embedded `assets/AppIcon-512.png` (from the same icns) to the viewport, which eframe also uses for the macOS Dock. Verified in the Dock with the raw release binary. The rc.5 DMG was rebuilt with it.

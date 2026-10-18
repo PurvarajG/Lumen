@@ -88,6 +88,20 @@ fn parse() -> Result<Mode, String> {
     })
 }
 
+/// The app icon for the Dock and window, so it shows however the app is launched (the bundle's
+/// `AppIcon.icns` only applies to a packaged app).
+fn app_icon() -> eframe::egui::IconData {
+    let png = include_bytes!("../assets/AppIcon-512.png");
+    let image = image::load_from_memory_with_format(png, image::ImageFormat::Png)
+        .expect("embedded app icon is a PNG")
+        .to_rgba8();
+    eframe::egui::IconData {
+        width: image.width(),
+        height: image.height(),
+        rgba: image.into_raw(),
+    }
+}
+
 fn main() -> ExitCode {
     discover_homebrew_tools();
     let mode = match parse() {
@@ -112,7 +126,8 @@ fn main() -> ExitCode {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Lumen Presenter")
             .with_inner_size([1500.0, 982.0])
-            .with_min_inner_size([1100.0, 700.0]),
+            .with_min_inner_size([1100.0, 700.0])
+            .with_icon(app_icon()),
         ..Default::default()
     };
     match eframe::run_native(
