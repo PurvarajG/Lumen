@@ -1,0 +1,11 @@
+Scripture and kirtan texts included with Lumen Presenter
+=========================================================
+
+The book texts under Resources/Books (Vachanamrut, Swamini Vato, Satsang Diksha,
+Kirtan Muktavali and the other texts in the Books panel) are copyright
+Anirdesh.com / BAPS Swaminarayan Sanstha. They come from anirdesh.com and are
+included with Lumen Presenter with permission from the copyright holders.
+
+They are not covered by Lumen Presenter's MIT licence (see Lumen-MIT.txt) and
+may not be copied out of the app, redistributed separately or used for any
+other purpose without the same permission.

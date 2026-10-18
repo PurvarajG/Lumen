@@ -38,7 +38,19 @@ Before cutting a release:
 
 ---
 
-## 3. Automated Packaging
+## 3. Books (before packaging)
+
+The book texts are copyright Anirdesh.com / BAPS and are included with their permission. They are never committed: fetch them into `.local/books` (gitignored), then the packaging script copies each `book.json` into the app. Keep a copy of the permission from Anirdesh/BAPS with your release records.
+
+```sh
+cargo run --release -p lumen-library --example fetch_books -- .local/books > .local/books/fetch.log 2>&1
+```
+
+It downloads the 15 catalog books one after another at about one request a second (about 1.5 hours the first time), skips books that are already complete and resumes interrupted ones. If a book fails, `fetch.log` names it; rerun to retry. `scripts/package-macos.sh --release` refuses to build when a book is missing; pass `--without-books` for a quick development package.
+
+---
+
+## 3b. Automated Packaging
 
 Run the packaging script with the `--release` flag:
 
@@ -56,7 +68,8 @@ scripts/package-macos.sh --release
    - `Lumen-MIT.txt` (Lumen Presenter MIT License)
 4. **App Icon Generation:** Ensures `AppIcon.icns` is built from the authored vector graphic (`crates/lumen-app/assets/icon.svg`) and placed in `Contents/Resources/AppIcon.icns`.
 5. **Metadata Ingestion:** Generates `Contents/Info.plist` with the exact workspace version and icon reference.
-6. **Prohibited Files Assertion:** Verifies that no commercial fonts (`*chitra*`) or scripture book texts are bundled inside the app.
+6. **Books and Notice:** Copies `.local/books/<id>/book.json` for all 15 catalog books into `Contents/Resources/Books/` and the copyright notice into `Contents/Resources/Licenses/Anirdesh-books.txt`.
+6b. **Prohibited Files Assertion:** Verifies that no commercial fonts (`*chitra*`) are bundled inside the app.
 7. **Ad-hoc Signing & Verification:** Signs the bundle ad-hoc and runs `codesign --verify --deep --strict`.
 8. **DMG Disk Image Creation:** Stages the `.app` alongside an `/Applications` symlink and creates a compressed UDZO disk image:
    `.local/dist/Lumen-Presenter-<version>-macos-arm64.dmg`

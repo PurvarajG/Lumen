@@ -7,8 +7,14 @@ export PATH
 cd "$PROJECT_ROOT"
 
 PROFILE=debug
-if [ "${1-}" = "--release" ]; then PROFILE=release; shift; fi
-if [ "$#" -ne 0 ]; then echo "usage: scripts/package-macos.sh [--release]" >&2; exit 2; fi
+WITH_BOOKS=1
+for arg in "$@"; do
+    case "$arg" in
+        --release) PROFILE=release ;;
+        --without-books) WITH_BOOKS=0 ;;
+        *) echo "usage: scripts/package-macos.sh [--release] [--without-books]" >&2; exit 2 ;;
+    esac
+done
 
 # Extract version dynamically from root Cargo.toml workspace.package
 VERSION=$(sed -n '/^\[workspace.package\]/,/^\[/p' "$PROJECT_ROOT/Cargo.toml" | grep -E '^version[[:space:]]*=' | head -n1 | sed -E 's/version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')
@@ -50,6 +56,24 @@ cp "$PROJECT_ROOT/crates/lumen-app/assets/fonts/PHOSPHOR-LICENSE.txt" "$LICENSES
 cp "$PROJECT_ROOT/LICENSE" "$LICENSES/Lumen-MIT.txt"
 cp "$PROJECT_ROOT/crates/lumen-text/fonts/Poppins-OFL.txt" "$RESOURCES/Poppins-OFL.txt"
 
+# Books fetched into .local/books by `cargo run --release -p lumen-library --example fetch_books -- .local/books`
+# (never committed). A release needs all of them; --without-books makes a quick dev package.
+if [ "$WITH_BOOKS" = 1 ]; then
+    BOOKS_SRC="$PROJECT_ROOT/.local/books"
+    BOOK_IDS=$(sed -n 's/^ *id: "\([a-z-]*\)",$/\1/p' "$PROJECT_ROOT/crates/lumen-library/src/model.rs")
+    for id in $BOOK_IDS; do
+        if [ ! -f "$BOOKS_SRC/$id/book.json" ]; then
+            echo "Missing book '$id' in $BOOKS_SRC. Run the fetch_books step in docs/RELEASE.md, or pass --without-books." >&2
+            exit 1
+        fi
+    done
+    for id in $BOOK_IDS; do
+        mkdir -p "$RESOURCES/Books/$id"
+        cp "$BOOKS_SRC/$id/book.json" "$RESOURCES/Books/$id/book.json"
+    done
+    cp "$PROJECT_ROOT/crates/lumen-app/assets/Anirdesh-books.txt" "$LICENSES/Anirdesh-books.txt"
+fi
+
 # Ensure app icon is present
 ICON_SRC="$PROJECT_ROOT/crates/lumen-app/assets/AppIcon.icns"
 if [ ! -f "$ICON_SRC" ]; then
@@ -78,7 +102,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Assert that neither ChitraUni nor book texts are bundled inside the app
+# Assert that ChitraUni is not bundled inside the app (the book texts are, with permission)
 if find "$APP" -iname "*chitra*" | grep -q .; then
     echo "ERROR: ChitraUni font or reference found inside app bundle!" >&2
     exit 1
@@ -112,5 +136,5 @@ cat << 'REQ'
 External runtime requirements:
   - FFmpeg / ffprobe: required for video backgrounds and thumbnail extraction (Homebrew: brew install ffmpeg)
   - ChitraUni font: optional commercial font in Font Book for Gujarati; Noto Sans Gujarati is bundled as fallback
-  - Network: required only on demand for downloading scripture books (offline once downloaded)
+  - Network: not required; the scripture books are included in the app
 REQ

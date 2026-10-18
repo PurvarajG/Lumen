@@ -12,8 +12,8 @@ use lumen_library::{
     unit_slides,
 };
 use std::{
-    collections::{HashMap, VecDeque},
-    path::PathBuf,
+    collections::{HashMap, HashSet, VecDeque},
+    path::{Path, PathBuf},
     sync::{
         Arc,
         mpsc::{self, Receiver},
@@ -357,9 +357,17 @@ struct Installed {
     index: Arc<SearchIndex>,
     sizes: HashMap<String, u64>,
     errors: HashMap<String, String>,
+    /// Books read from the app bundle because the user has no copy of their own.
+    included: HashSet<String>,
+    /// Units already cached for books that are not complete, for a "Resume" button.
+    partials: HashMap<String, usize>,
 }
 pub struct Books {
     root: Option<PathBuf>,
+    /// Read-only books shipped inside the app: `Contents/Resources/Books`.
+    bundled: Option<PathBuf>,
+    included: HashSet<String>,
+    partials: HashMap<String, usize>,
     states: HashMap<String, DownloadState>,
     queue: DownloadQueue,
     active: Option<ActiveDownload>,
@@ -380,15 +388,116 @@ pub struct Books {
     recent: Vec<Target>,
     focus_add: bool,
 }
+/// The books shipped inside the app bundle, if this is a bundled build that has them.
+fn bundled_root() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let books = exe.parent()?.parent()?.join("Resources/Books");
+    books.is_dir().then_some(books)
+}
+
+/// Loads every catalog book: the user's own copy when it loads, else the bundled one.
+fn load_installed(root: Option<&Path>, bundled: Option<&Path>) -> Installed {
+    let (mut books, mut sizes, mut errors) = (Vec::new(), HashMap::new(), HashMap::new());
+    let (mut included, mut partials) = (HashSet::new(), HashMap::new());
+    let disk_sizes: HashMap<_, _> = root
+        .map(|root| {
+            lumen_library::installed_books(root)
+                .into_iter()
+                .map(|(id, _, bytes)| (id, bytes))
+                .collect()
+        })
+        .unwrap_or_default();
+    let load = |dir: &Path, id: &str| -> Option<Result<Book, String>> {
+        // units/ is a resumable partial download, never a completed installation.
+        if !dir.join(id).join("book.json").is_file() {
+            return None;
+        }
+        Some(match lumen_library::load_book(dir, id) {
+            Ok(book) if book.schema == lumen_library::SCHEMA_VERSION && book.id == id => Ok(book),
+            Ok(_) => Err("Unsupported or mismatched book cache. Delete it and retry.".into()),
+            Err(e) => Err(format!("Couldn't load book: {e}. Delete it and retry.")),
+        })
+    };
+    for info in catalog() {
+        let own = root.and_then(|dir| load(dir, info.id));
+        let shipped = bundled.and_then(|dir| load(dir, info.id));
+        let (book, size) = match (own, shipped) {
+            (Some(Ok(book)), _) => (book, disk_sizes.get(info.id).copied().unwrap_or(0)),
+            (_, Some(Ok(book))) => {
+                included.insert(info.id.to_string());
+                let path = bundled.map(|dir| dir.join(info.id).join("book.json"));
+                let size = path.and_then(|p| std::fs::metadata(p).ok());
+                (book, size.map_or(0, |m| m.len()))
+            }
+            (Some(Err(error)), _) | (None, Some(Err(error))) => {
+                errors.insert(info.id.into(), error);
+                continue;
+            }
+            (None, None) => {
+                let units = root.map_or(0, |dir| cached_units(&dir.join(info.id)));
+                if units > 0 {
+                    partials.insert(info.id.to_string(), units);
+                }
+                continue;
+            }
+        };
+        sizes.insert(book.id.clone(), size);
+        books.push(book);
+    }
+    let index = Arc::new(SearchIndex::new(&books));
+    Installed {
+        books: Arc::new(books),
+        index,
+        sizes,
+        errors,
+        included,
+        partials,
+    }
+}
+
+/// Appends a failed download to `Books/download.log` so the next failure can be diagnosed.
+fn log_failure(root: &Path, id: &str, error: &str) {
+    use std::io::Write;
+    let line = format!(
+        "{} {id}: {error}\n",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+    );
+    let _ = std::fs::create_dir_all(root).and_then(|()| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(root.join("download.log"))?
+            .write_all(line.as_bytes())
+    });
+}
+
+/// Units already downloaded into `<book>/units`.
+fn cached_units(book_dir: &Path) -> usize {
+    std::fs::read_dir(book_dir.join("units")).map_or(0, |entries| {
+        entries
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+            .count()
+    })
+}
+
 impl Books {
     pub fn new(ctx: &egui::Context, downloads: &[String]) -> Self {
         let root =
             crate::settings::settings_path().and_then(|p| p.parent().map(|p| p.join("Books")));
-        Self::at_root(ctx, root, downloads)
+        Self::at_root(ctx, root, bundled_root(), downloads)
     }
-    fn at_root(ctx: &egui::Context, root: Option<PathBuf>, downloads: &[String]) -> Self {
+    fn at_root(
+        ctx: &egui::Context,
+        root: Option<PathBuf>,
+        bundled: Option<PathBuf>,
+        downloads: &[String],
+    ) -> Self {
         let mut state = Self {
             root,
+            bundled,
+            included: HashSet::new(),
+            partials: HashMap::new(),
             states: HashMap::new(),
             queue: DownloadQueue::default(),
             active: None,
@@ -420,57 +529,15 @@ impl Books {
         state
     }
     fn reload(&mut self, ctx: &egui::Context) {
-        let Some(root) = self.root.clone() else {
+        if self.root.is_none() && self.bundled.is_none() {
             return;
-        };
+        }
+        let (root, bundled) = (self.root.clone(), self.bundled.clone());
         let (tx, rx) = mpsc::channel();
         let ctx = ctx.clone();
         self.loading = Some(rx);
         thread::spawn(move || {
-            let mut books = Vec::new();
-            let mut sizes = HashMap::new();
-            let mut errors = HashMap::new();
-            let disk_sizes: HashMap<_, _> = lumen_library::installed_books(&root)
-                .into_iter()
-                .map(|(id, _, bytes)| (id, bytes))
-                .collect();
-            for info in catalog() {
-                // units/ is a resumable partial download, never a completed installation.
-                let path = root.join(info.id).join("book.json");
-                if !path.is_file() {
-                    continue;
-                }
-                match lumen_library::load_book(&root, info.id) {
-                    Ok(book)
-                        if book.schema == lumen_library::SCHEMA_VERSION && book.id == info.id =>
-                    {
-                        sizes.insert(
-                            book.id.clone(),
-                            disk_sizes.get(&book.id).copied().unwrap_or(0),
-                        );
-                        books.push(book);
-                    }
-                    Ok(_) => {
-                        errors.insert(
-                            info.id.into(),
-                            "Unsupported or mismatched book cache. Delete it and retry.".into(),
-                        );
-                    }
-                    Err(e) => {
-                        errors.insert(
-                            info.id.into(),
-                            format!("Couldn't load book: {e}. Delete it and retry."),
-                        );
-                    }
-                }
-            }
-            let index = Arc::new(SearchIndex::new(&books));
-            let _ = tx.send(Installed {
-                books: Arc::new(books),
-                index,
-                sizes,
-                errors,
-            });
+            let _ = tx.send(load_installed(root.as_deref(), bundled.as_deref()));
             ctx.request_repaint();
         });
     }
@@ -496,6 +563,8 @@ impl Books {
                     self.states.remove(info.id);
                 }
             }
+            self.included = loaded.included;
+            self.partials = loaded.partials;
             self.installed = loaded.books;
             self.index = Some(loaded.index);
             self.loading = None;
@@ -548,6 +617,9 @@ impl Books {
                         reload = true;
                     }
                     DownloadEvent::Failed(error) => {
+                        if let Some(root) = &self.root {
+                            log_failure(root, &active.id, &error);
+                        }
                         self.states
                             .insert(active.id.clone(), DownloadState::Failed(error));
                         active.retire(ctx);
@@ -874,7 +946,11 @@ pub fn search_field(app: &mut LumenApp, ui: &mut egui::Ui) -> bool {
 
 pub fn catalog_panel(app: &mut LumenApp, ui: &mut egui::Ui) {
     if !app.settings.books_note_seen {
-        ui.label("Books are downloaded from anirdesh.com to this Mac for personal use.");
+        ui.label(if app.books.included.is_empty() {
+            "Books are downloaded from anirdesh.com to this Mac for personal use."
+        } else {
+            "The books are included with the app, from anirdesh.com, with permission from BAPS."
+        });
         if ui.button("Got it").clicked() {
             app.settings.books_note_seen = true;
             app.persist_settings();
@@ -991,8 +1067,17 @@ pub fn catalog_panel(app: &mut LumenApp, ui: &mut egui::Ui) {
                     } else {
                         match state {
                             DownloadState::NotDownloaded => {
-                                ui.label("Not downloaded");
-                                if ui.button(format!("Download {}", info.title_en)).clicked() {
+                                let partial = app.books.partials.get(info.id).copied();
+                                ui.label(if partial.is_some() {
+                                    "Partly downloaded"
+                                } else {
+                                    "Not downloaded"
+                                });
+                                let label = match partial {
+                                    Some(n) => format!("Resume · {n} of {}", info.units),
+                                    None => format!("Download {}", info.title_en),
+                                };
+                                if ui.button(label).clicked() {
                                     app.books.enqueue(info.id);
                                     sync_downloads(app);
                                 }
@@ -1029,8 +1114,10 @@ pub fn catalog_panel(app: &mut LumenApp, ui: &mut egui::Ui) {
                                 });
                             }
                             DownloadState::Downloaded { bytes } => {
+                                let included = app.books.included.contains(info.id);
                                 ui.label(format!(
-                                    "Downloaded · {:.1} MB",
+                                    "{} · {:.1} MB",
+                                    if included { "Included" } else { "Downloaded" },
                                     bytes as f64 / 1_048_576.0
                                 ));
                                 ui.horizontal(|ui| {
@@ -1038,7 +1125,7 @@ pub fn catalog_panel(app: &mut LumenApp, ui: &mut egui::Ui) {
                                         app.books.opened = Some(info.id.into());
                                         app.books.unit_filter.clear();
                                     }
-                                    if ui.button("Delete").clicked() {
+                                    if !included && ui.button("Delete").clicked() {
                                         app.books.confirm_delete = Some(info.id.into());
                                     }
                                 });
@@ -1470,7 +1557,7 @@ mod tests {
         std::fs::create_dir_all(root.join("vato")).unwrap();
         std::fs::write(root.join("vato/book.json"), b"malformed synthetic cache").unwrap();
         let ctx = egui::Context::default();
-        let mut books = Books::at_root(&ctx, Some(root.clone()), &[]);
+        let mut books = Books::at_root(&ctx, Some(root.clone()), None, &[]);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         while books.loading.is_some() && std::time::Instant::now() < deadline {
             books.poll(&ctx);
@@ -1493,6 +1580,48 @@ mod tests {
         drop(books);
         std::fs::remove_dir_all(root).unwrap();
     }
+    fn write_book(root: &Path, id: &str, marker: &str) {
+        let dir = root.join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut book = fixture();
+        book.id = id.into();
+        book.title_en = marker.into();
+        std::fs::write(dir.join("book.json"), serde_json::to_vec(&book).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn bundled_books_fill_in_for_missing_ones_and_the_users_copy_wins() {
+        let base = std::env::temp_dir().join(format!("lumen-bundled-{}", Uuid::new_v4()));
+        let (own, shipped) = (base.join("own"), base.join("bundle"));
+        write_book(&shipped, "vachanamrut", "bundled");
+        write_book(&shipped, "vato", "bundled");
+        write_book(&own, "vato", "own");
+        write_book(&own, "diksha", "own");
+        std::fs::create_dir_all(own.join("kirtan/units")).unwrap();
+        std::fs::write(own.join("kirtan/units/1.json"), b"{}").unwrap();
+        let loaded = load_installed(Some(&own), Some(&shipped));
+        let title = |id: &str| {
+            loaded
+                .books
+                .iter()
+                .find(|b| b.id == id)
+                .map(|b| b.title_en.clone())
+        };
+        assert_eq!(title("vachanamrut").as_deref(), Some("bundled"));
+        assert_eq!(title("vato").as_deref(), Some("own"));
+        assert_eq!(title("diksha").as_deref(), Some("own"));
+        assert_eq!(title("gita"), None);
+        assert_eq!(loaded.included, HashSet::from(["vachanamrut".to_string()]));
+        assert_eq!(loaded.partials.get("kirtan"), Some(&1));
+        assert!(loaded.sizes["vachanamrut"] > 0);
+
+        // Without a bundle the same data dir behaves as before.
+        let loaded = load_installed(Some(&own), None);
+        assert_eq!(loaded.books.len(), 2);
+        assert!(loaded.included.is_empty());
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
     #[test]
     fn download_queue_serializes_deduplicates_and_cancels() {
         let mut q = DownloadQueue::default();
