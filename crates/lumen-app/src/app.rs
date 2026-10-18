@@ -72,6 +72,8 @@ pub struct LumenApp {
     /// An output window existed last frame, so fullscreen may now apply on its own display.
     audience_placed: bool,
     stage_placed: bool,
+    audience_target: Option<crate::displays::DisplayInfo>,
+    stage_target: Option<crate::displays::DisplayInfo>,
     pub published: Arc<Mutex<Published>>,
     tx: Sender<FileResult>,
     rx: Receiver<FileResult>,
@@ -190,6 +192,8 @@ impl LumenApp {
             fullscreen_stage: settings.stage_fullscreen,
             audience_placed: false,
             stage_placed: false,
+            audience_target: None,
+            stage_target: None,
             published: Arc::new(Mutex::new(Published::default())),
             tx,
             rx,
@@ -1608,7 +1612,24 @@ impl LumenApp {
             }
         }
         let data = self.published.clone();
-        let audience_open = self.audience_open();
+        let mut audience_open = self.audience_open();
+        let target = crate::displays::target_display(
+            self.settings.audience_display.as_ref(),
+            &self.displays,
+        )
+        .cloned();
+        if crate::displays::needs_replace(
+            self.audience_placed,
+            self.audience_target.as_ref(),
+            target.as_ref(),
+        ) {
+            // A fullscreen window ignores a new position, so close it for a frame; it reopens
+            // windowed on the new display and goes fullscreen a frame later, like the first open.
+            self.audience_placed = false;
+            audience_open = false;
+            ctx.request_repaint();
+        }
+        self.audience_target = target;
         // macOS fullscreens a new window on the display it starts on, before the position
         // applies; open windowed on the chosen display, then go fullscreen a frame later.
         let audience_fullscreen = self.fullscreen_audience && self.audience_placed;
@@ -1683,9 +1704,23 @@ impl LumenApp {
             );
         }
         let data = self.published.clone();
+        let target =
+            crate::displays::target_display(self.settings.stage_display.as_ref(), &self.displays)
+                .cloned();
+        let mut show_stage = self.show_stage;
+        if crate::displays::needs_replace(
+            self.stage_placed,
+            self.stage_target.as_ref(),
+            target.as_ref(),
+        ) {
+            self.stage_placed = false;
+            show_stage = false;
+            ctx.request_repaint();
+        }
+        self.stage_target = target;
         let stage_fullscreen = self.fullscreen_stage && self.stage_placed;
-        self.stage_placed = self.show_stage;
-        if self.show_stage {
+        self.stage_placed = show_stage;
+        if show_stage {
             let viewport_id = ViewportId::from_hash_of("stage");
             ctx.request_repaint_of(viewport_id);
             let close_cb = self.stage_close_requested.clone();

@@ -33,20 +33,44 @@ impl DisplayInfo {
     }
 }
 
-/// Match a persisted display identity to the currently attached displays.
-/// Resolution is part of identity so a same-named replacement is not assumed
-/// to be the original screen.
+/// Match a persisted display identity to the currently attached displays, most exact first:
+/// same name and resolution; same name at any resolution (an LED processor or projector that
+/// renegotiated its mode); otherwise the only non-primary display, since a rented or swapped
+/// projector arrives under a new name. `None` when none applies.
+/// shortcut: the saved display's primary-ness is not stored, so a saved built-in screen with the
+/// lid closed and two externals attached can match the wrong external; fine until displays keep ids.
 pub fn match_display<'a>(
     saved: Option<&DisplayKey>,
     available: &'a [DisplayInfo],
 ) -> Option<&'a DisplayInfo> {
-    match saved {
-        Some(saved) => available.iter().find(|display| display.key == *saved),
-        None => available
+    let Some(saved) = saved else {
+        return available
             .iter()
             .find(|display| display.primary)
-            .or_else(|| available.first()),
-    }
+            .or_else(|| available.first());
+    };
+    available
+        .iter()
+        .find(|display| display.key == *saved)
+        .or_else(|| available.iter().find(|d| d.key.name == saved.name))
+        .or_else(|| {
+            let mut others = available.iter().filter(|display| !display.primary);
+            others.next().filter(|_| others.next().is_none())
+        })
+}
+
+/// Where an output window actually goes: its matched display, else the primary one.
+pub fn target_display<'a>(
+    saved: Option<&DisplayKey>,
+    available: &'a [DisplayInfo],
+) -> Option<&'a DisplayInfo> {
+    match_display(saved, available).or_else(|| match_display(None, available))
+}
+
+/// An open, placed output window must be put back on its display (windowed, then fullscreen)
+/// when the display it should be on changed: it dropped out, came back, moved or changed mode.
+pub fn needs_replace(placed: bool, last: Option<&DisplayInfo>, now: Option<&DisplayInfo>) -> bool {
+    placed && last != now
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -89,7 +113,7 @@ pub fn outputs_panel(
         if saved.is_some() && matched.is_none() {
             ui.colored_label(
                 crate::style::WARN,
-                "Saved display is unavailable; using the primary display.",
+                "Saved display is unavailable; using the primary display until it returns.",
             );
         }
         let selected_index = matched
@@ -323,12 +347,61 @@ mod tests {
             match_display(Some(&displays[1].key), &displays),
             Some(&displays[1])
         );
+        assert_eq!(
+            match_display(Some(&displays[0].key), &displays),
+            Some(&displays[0])
+        );
+    }
+
+    #[test]
+    fn saved_display_survives_a_resolution_change_or_a_rename() {
+        let displays = [
+            display("Built-in", 3024, 1964, 0),
+            display("Projector", 1920, 1080, 3024),
+        ];
         let changed_resolution = DisplayKey {
             name: "Projector".into(),
             width: 1280,
             height: 720,
         };
-        assert_eq!(match_display(Some(&changed_resolution), &displays), None);
+        assert_eq!(
+            match_display(Some(&changed_resolution), &displays),
+            Some(&displays[1])
+        );
+        let renamed = DisplayKey {
+            name: "LED processor".into(),
+            width: 3840,
+            height: 2160,
+        };
+        assert_eq!(match_display(Some(&renamed), &displays), Some(&displays[1]));
+    }
+
+    #[test]
+    fn a_missing_display_is_not_guessed_when_several_others_are_attached() {
+        let displays = [
+            display("Built-in", 3024, 1964, 0),
+            display("Projector", 1920, 1080, 3024),
+            display("Stage TV", 1920, 1080, 4944),
+        ];
+        let gone = DisplayKey {
+            name: "LED processor".into(),
+            width: 3840,
+            height: 2160,
+        };
+        assert_eq!(match_display(Some(&gone), &displays), None);
+        assert_eq!(match_display(Some(&gone), &displays[..1]), None);
+        assert_eq!(target_display(Some(&gone), &displays), Some(&displays[0]));
+    }
+
+    #[test]
+    fn replaces_a_placed_window_only_when_its_display_changed() {
+        let a = display("Projector", 1920, 1080, 3024);
+        let b = display("Projector", 1280, 720, 3024);
+        assert!(!needs_replace(true, Some(&a), Some(&a)));
+        assert!(needs_replace(true, Some(&a), Some(&b)));
+        assert!(needs_replace(true, Some(&a), None));
+        assert!(needs_replace(true, None, Some(&a)));
+        assert!(!needs_replace(false, Some(&a), Some(&b)));
     }
 
     #[test]
@@ -343,9 +416,10 @@ mod tests {
             width: 800,
             height: 600,
         };
-        assert_eq!(match_display(Some(&missing), &displays), None);
+        // Only the laptop is attached, so nothing else can stand in for the missing display.
+        assert_eq!(match_display(Some(&missing), &displays[..1]), None);
         assert_eq!(
-            match_display(Some(&missing), &displays).or(displays.first()),
+            target_display(Some(&missing), &displays[..1]),
             Some(&displays[0])
         );
     }
