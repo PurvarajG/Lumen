@@ -27,7 +27,7 @@ Prepare mode swaps the right column's tools for the slide inspector (text, box, 
 
 ## States (every surface)
 
-Hover (raised + 1 step lighter), pressed, focused (2 pt saffron focus ring, keyboard visible), disabled (text_faint, no hover), loading (inline spinner + verb, never a blocking modal), empty (one sentence + the one action that fixes it, e.g. "No books downloaded yet — Download books"), error (inline, names problem + recovery, `live`-red icon only for on-air problems, `warn` otherwise).
+Hover (raised + 1 step lighter), pressed, focused (2 pt saffron focus ring, keyboard visible), disabled (text_faint, no hover), loading (inline spinner + verb, never a blocking modal; a media cue without a thumbnail shows "Loading preview…" and the file name on a raised panel in the running order, the cue grid and the Preview, never black), empty (one sentence + the one action that fixes it, e.g. "No books downloaded yet — Download books"), error (inline, names problem + recovery, `live`-red icon only for on-air problems, `warn` otherwise; a media cue that cannot be previewed shows a `warn` icon with "Can't preview <file>" or "File not found: <file>", the reason in the tooltip, and is retried after 10 s unless the file is missing).
 
 ## Controls and copy
 

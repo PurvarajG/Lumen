@@ -1,6 +1,9 @@
+use crate::thumbnails::PreviewState;
 use crate::{app::LumenApp, render, style};
 use egui::{self, RichText, Vec2};
-use lumen_core::{CueAction, Document, Macro, PlaylistItem, Project, Slide, Transition};
+use lumen_core::{
+    Background, CueAction, Document, Macro, PlaylistItem, Project, Slide, Transition,
+};
 use uuid::Uuid;
 
 pub fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
@@ -313,6 +316,9 @@ fn document_rows(
                             texture.as_ref(),
                             &images,
                         );
+                        if let Some(live) = &live_slide {
+                            thumbnail_placeholder(app, ui, thumb, &live.slide.background);
+                        }
                         ui.painter().rect_stroke(
                             thumb,
                             0.0,
@@ -446,6 +452,30 @@ fn document_rows(
             }
         });
 }
+/// Covers a media cue's preview with a loading or error placeholder while it has no thumbnail,
+/// and returns the tooltip for a failed one.
+fn thumbnail_placeholder(
+    app: &LumenApp,
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    background: &Background,
+) -> Option<String> {
+    let (Background::Image { path } | Background::Video { path, .. }) = background else {
+        return None;
+    };
+    let state = app.thumbnails.state(path)?;
+    let name = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    render::media_placeholder(ui, rect, &name, &state);
+    match state {
+        PreviewState::Loading => None,
+        PreviewState::Failed(reason) => Some(reason),
+        PreviewState::Missing => Some(format!("File not found: {}", path.display())),
+    }
+}
+
 fn append_playlist_item(project: &mut Project, document_id: Uuid) -> bool {
     if project.document(document_id).is_none() {
         return false;
@@ -495,18 +525,38 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
             .is_some_and(|(p, n)| (p.document_id, p.slide.id) == (n.document_id, n.slide.id));
     ui.heading(if up_next { "Up next" } else { "Preview" });
     let height = preview_height(ui.available_width(), ui.available_height());
-    let texture = preview
+    // One snapshot per call; cloning the map per tile was O(tiles x thumbnails).
+    let images = app.thumbnails.images();
+    let still = preview
         .as_ref()
         .and_then(|p| app.thumbnail(&p.slide.background));
-    render::preview_frame_with_images(
+    // Only the live background has live frames; any other cue shows its still.
+    let on_air = preview.as_ref().is_some_and(|p| {
+        !app.runtime.output.media_cleared
+            && !app.media.pending
+            && app.media.matches_background(Some(&p.slide.background))
+    });
+    let texture = preview_texture(on_air, app.media.image_texture.clone(), still);
+    let frame = render::preview_frame_with_images(
         ui,
         preview.as_ref(),
         false,
         false,
         texture.as_ref(),
-        &app.thumbnails.images(),
+        &images,
         height,
     );
+    if texture.is_none()
+        && let Some(p) = &preview
+        && let Some(reason) = thumbnail_placeholder(app, ui, frame, &p.slide.background)
+    {
+        ui.interact(
+            frame,
+            ui.id().with("preview-placeholder"),
+            egui::Sense::hover(),
+        )
+        .on_hover_text(reason);
+    }
     if let Some(p) = &preview {
         crate::text::gu_label(
             ui,
@@ -623,22 +673,13 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
                                 rect,
                                 cue.as_ref(),
                                 texture.as_ref(),
-                                &app.thumbnails.images(),
+                                &images,
                             );
-                            if let lumen_core::Background::Image { path }
-                            | lumen_core::Background::Video { path, .. } = &slide.background
-                                && texture.is_none()
+                            if texture.is_none()
+                                && let Some(reason) =
+                                    thumbnail_placeholder(app, ui, rect, &slide.background)
                             {
-                                let status =
-                                    app.thumbnails.status(path).unwrap_or("Loading media…");
-                                ui.painter().text(
-                                    rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    "Media unavailable / loading",
-                                    egui::FontId::proportional(style::CAPTION),
-                                    style::TEXT_DIM,
-                                );
-                                r.clone().on_hover_text(status);
+                                r.clone().on_hover_text(reason);
                             }
                             let live = app
                                 .runtime
@@ -723,6 +764,11 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
                 }
             }
         });
+}
+
+/// The live frame when the cue's background is on air, otherwise the still thumbnail.
+fn preview_texture<T>(on_air: bool, live: Option<T>, still: Option<T>) -> Option<T> {
+    if on_air { live.or(still) } else { still }
 }
 
 fn deck_play_menu(app: &mut LumenApp, response: egui::Response, document_id: Uuid) {
@@ -1133,6 +1179,20 @@ mod tests {
         assert!(bottom_reserve(true, false) < bottom_reserve(false, false));
         assert!(bottom_reserve(false, false) < bottom_reserve(true, true));
         assert_eq!(bottom_reserve(true, true), bottom_reserve(false, true));
+    }
+    #[test]
+    fn preview_uses_live_frames_only_for_the_on_air_background() {
+        assert_eq!(
+            preview_texture(true, Some("live"), Some("still")),
+            Some("live")
+        );
+        // No frame yet: fall back to the still instead of showing nothing.
+        assert_eq!(preview_texture(true, None, Some("still")), Some("still"));
+        assert_eq!(
+            preview_texture(false, Some("live"), Some("still")),
+            Some("still")
+        );
+        assert_eq!(preview_texture::<&str>(false, Some("live"), None), None);
     }
     #[test]
     fn missing_document_cannot_enter_playlist() {

@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::thumbnails::PreviewState;
 use egui::{Color32, Pos2, Rect, Stroke, TextureHandle, Vec2};
 use lumen_core::{
     Backdrop, Background, LiveSlide, OutputState, Project, PushDirection, Runtime, SlideObject,
@@ -587,6 +588,98 @@ pub fn preview_frame_with_images(
     rect
 }
 
+/// Warning glyph in the Phosphor font.
+const WARNING_ICON: char = '\u{e4e0}';
+
+/// Under this size (thumbnail in a running-order row) a placeholder shows only its icon.
+fn placeholder_is_compact(size: Vec2) -> bool {
+    size.x < 120.0 || size.y < 64.0
+}
+
+/// Headline and optional second line of a placeholder, e.g. ("Loading preview…", Some(name)).
+fn placeholder_copy(file_name: &str, state: &PreviewState) -> (String, Option<String>) {
+    match state {
+        PreviewState::Loading => ("Loading preview…".into(), Some(file_name.into())),
+        PreviewState::Failed(_) => (format!("Can't preview {file_name}"), None),
+        PreviewState::Missing => (format!("File not found: {file_name}"), None),
+    }
+}
+
+/// Fills the preview surface for a media cue that has no thumbnail, so it is never plain black.
+pub fn media_placeholder(ui: &egui::Ui, rect: Rect, file_name: &str, state: &PreviewState) {
+    let painter = ui.painter().with_clip_rect(rect);
+    painter.rect_filled(rect, 0.0, crate::style::RAISED);
+    let loading = matches!(state, PreviewState::Loading);
+    let icon_size = if placeholder_is_compact(rect.size()) {
+        rect.height().min(rect.width()) * 0.4
+    } else {
+        20.0
+    };
+    let (headline, detail) = placeholder_copy(file_name, state);
+    let compact = placeholder_is_compact(rect.size());
+    let line_height = crate::style::CAPTION * 1.4;
+    let lines = if compact {
+        0.0
+    } else if detail.is_some() {
+        2.0
+    } else {
+        1.0
+    };
+    let gap = if compact {
+        0.0
+    } else {
+        crate::style::GAP * 0.75
+    };
+    let block = icon_size + gap + lines * line_height;
+    let icon_rect = Rect::from_center_size(
+        Pos2::new(
+            rect.center().x,
+            rect.center().y - block / 2.0 + icon_size / 2.0,
+        ),
+        Vec2::splat(icon_size),
+    );
+    if loading {
+        egui::Spinner::new()
+            .size(icon_size)
+            .color(crate::style::TEXT_DIM)
+            .paint_at(ui, icon_rect);
+    } else {
+        painter.text(
+            icon_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            WARNING_ICON,
+            egui::FontId::new(icon_size, egui::FontFamily::Name("Phosphor".into())),
+            crate::style::WARN,
+        );
+    }
+    if compact {
+        return;
+    }
+    let width = (rect.width() - 16.0).max(1.0);
+    let mut y = icon_rect.bottom() + gap;
+    for (text, color) in [
+        Some((headline, crate::style::TEXT)),
+        detail.map(|d| (d, crate::style::TEXT_DIM)),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            text,
+            egui::FontId::proportional(crate::style::CAPTION),
+            color,
+        );
+        job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+        let galley = painter.layout_job(job);
+        painter.galley(
+            Pos2::new(rect.center().x - galley.size().x / 2.0, y),
+            galley,
+            color,
+        );
+        y += line_height;
+    }
+}
+
 /// Stage text uses the same shaping path as audience text, including Latin spans.
 pub fn stage_text(ui: &mut egui::Ui, text: &str, size: f32, height: f32) {
     let (rect, _) = ui.allocate_exact_size(
@@ -768,6 +861,53 @@ mod tests {
             ..transition
         };
         assert!(!released.is_active());
+    }
+
+    #[test]
+    fn placeholder_copy_names_the_file_in_every_state() {
+        assert_eq!(
+            placeholder_copy("a.mov", &PreviewState::Loading),
+            ("Loading preview…".into(), Some("a.mov".into()))
+        );
+        assert_eq!(
+            placeholder_copy("a.mov", &PreviewState::Failed("boom".into())),
+            ("Can't preview a.mov".into(), None)
+        );
+        assert_eq!(
+            placeholder_copy("a.mov", &PreviewState::Missing),
+            ("File not found: a.mov".into(), None)
+        );
+        // A running-order thumbnail is icon only; a grid tile has room for text.
+        assert!(placeholder_is_compact(Vec2::new(78.0, 44.0)));
+        assert!(!placeholder_is_compact(Vec2::new(160.0, 90.0)));
+    }
+
+    #[test]
+    fn placeholder_is_never_empty_in_any_size_or_state() {
+        let ctx = egui::Context::default();
+        crate::style::install(&ctx);
+        for size in [Vec2::new(78.0, 44.0), Vec2::new(300.0, 169.0)] {
+            for state in [
+                PreviewState::Loading,
+                PreviewState::Failed("x".into()),
+                PreviewState::Missing,
+            ] {
+                let frame = ctx.run(Default::default(), |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        media_placeholder(
+                            ui,
+                            Rect::from_min_size(Pos2::ZERO, size),
+                            "a.mov",
+                            &state,
+                        );
+                    });
+                });
+                let fills = frame.shapes.iter().any(
+                    |s| matches!(&s.shape, egui::Shape::Rect(r) if r.fill == crate::style::RAISED),
+                );
+                assert!(fills, "{state:?} at {size:?} must paint the panel");
+            }
+        }
     }
 
     #[test]
