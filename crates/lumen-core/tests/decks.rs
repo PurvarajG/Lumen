@@ -6,11 +6,11 @@ fn pdf_and_deck_cues_round_trip_without_schema_bump() {
     let mut project = Project::demo();
     let slide = &mut project.documents[0].slides[0];
     slide.background = Background::Pdf {
-        path: "vectors.pdf".into(),
+        path: "/media/vectors.pdf".into(),
         page: 2,
     };
     slide.actions = vec![CueAction::PlayDeck {
-        path: "animated.key".into(),
+        path: "/media/animated.key".into(),
     }];
     project.validate().unwrap();
     assert_eq!(project.schema_version, 2);

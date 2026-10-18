@@ -485,6 +485,44 @@ impl Document {
 }
 
 impl Project {
+    /// Every file path the show refers to, in memory order. Path rewrites (relative save, media
+    /// collection, relinking) all go through this, so a new path field is added here once.
+    pub fn paths_mut(&mut self) -> Vec<&mut PathBuf> {
+        fn actions<'a>(out: &mut Vec<&'a mut PathBuf>, list: &'a mut [CueAction]) {
+            out.extend(list.iter_mut().filter_map(|a| match a {
+                CueAction::PlayDeck { path } => Some(path),
+                _ => None,
+            }));
+        }
+        fn objects<'a>(out: &mut Vec<&'a mut PathBuf>, list: &'a mut [SlideObject]) {
+            out.extend(list.iter_mut().filter_map(|o| match o {
+                SlideObject::Image { path, .. } => Some(path),
+                _ => None,
+            }));
+        }
+        let mut out = Vec::new();
+        for doc in &mut self.documents {
+            out.extend(doc.source.as_mut());
+            for slide in &mut doc.slides {
+                match &mut slide.background {
+                    Background::Image { path, .. }
+                    | Background::Video { path, .. }
+                    | Background::Pdf { path, .. } => out.push(path),
+                    Background::Solid(_) => {}
+                }
+                out.extend(slide.audio.as_mut().map(|a| &mut a.path));
+                actions(&mut out, &mut slide.actions);
+                objects(&mut out, &mut slide.objects);
+            }
+        }
+        for prop in &mut self.props {
+            objects(&mut out, &mut prop.objects);
+        }
+        for m in &mut self.macros {
+            actions(&mut out, &mut m.actions);
+        }
+        out
+    }
     pub fn document(&self, id: Uuid) -> Option<&Document> {
         self.documents.iter().find(|doc| doc.id == id)
     }

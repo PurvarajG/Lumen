@@ -85,9 +85,13 @@ pub struct Settings {
     pub audience_fullscreen: bool,
     pub stage_fullscreen: bool,
     pub layouts: Layouts,
+    /// Shows opened or saved, most recent first, at most `MAX_RECENT`.
+    pub recent_projects: Vec<std::path::PathBuf>,
     #[serde(skip)]
     pub reveal_token: bool,
 }
+
+pub const MAX_RECENT: usize = 8;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -109,6 +113,7 @@ impl Default for Settings {
             audience_fullscreen: false,
             stage_fullscreen: false,
             layouts: Layouts::default(),
+            recent_projects: Vec::new(),
             reveal_token: false,
         }
     }
@@ -121,6 +126,13 @@ pub struct SettingsLoad {
 }
 
 impl Settings {
+    /// Puts `path` first in the recent list, once, keeping the newest `MAX_RECENT`.
+    pub fn remember_project(&mut self, path: &Path) {
+        self.recent_projects.retain(|p| p != path);
+        self.recent_projects.insert(0, path.to_path_buf());
+        self.recent_projects.truncate(MAX_RECENT);
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         self.http_addr
             .parse::<SocketAddr>()
@@ -458,6 +470,31 @@ pub fn stage_options(ui: &mut Ui, stage: &mut StageOptions, project: &Project) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recent_shows_are_newest_first_unique_and_capped() {
+        let mut settings = Settings::default();
+        for n in 0..10 {
+            settings.remember_project(Path::new(&format!("/shows/{n}.lumen.json")));
+        }
+        settings.remember_project(Path::new("/shows/5.lumen.json"));
+        assert_eq!(settings.recent_projects.len(), MAX_RECENT);
+        assert_eq!(
+            settings.recent_projects[0],
+            Path::new("/shows/5.lumen.json")
+        );
+        assert_eq!(
+            settings.recent_projects[1],
+            Path::new("/shows/9.lumen.json")
+        );
+        assert_eq!(
+            settings
+                .recent_projects
+                .iter()
+                .filter(|p| p.ends_with("5.lumen.json"))
+                .count(),
+            1
+        );
+    }
     #[test]
     fn default_settings_are_valid_and_token_is_url_safe() {
         let settings = Settings::default();

@@ -3,6 +3,7 @@ pub mod history;
 mod import;
 pub mod markup;
 mod model;
+pub mod portable;
 mod runtime;
 mod storage;
 

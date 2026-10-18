@@ -62,6 +62,10 @@ pub struct LumenApp {
     pub dirty: bool,
     pub path: Option<PathBuf>,
     pub error: String,
+    /// Set by Open Recent; consumed when the pending open begins.
+    open_path: Option<PathBuf>,
+    /// Media the open show refers to that is not on disk, as the worker last counted them.
+    missing_media: Vec<PathBuf>,
     pub status: String,
     pub media: MediaState,
     pub(super) deck: crate::deck::DeckController,
@@ -183,6 +187,8 @@ impl LumenApp {
             dirty: false,
             path,
             error: String::new(),
+            open_path: None,
+            missing_media: Vec::new(),
             status: "Ready".into(),
             media,
             deck: crate::deck::DeckController::new(),
@@ -257,6 +263,10 @@ impl LumenApp {
             saved_operation: 0,
         };
         app.ensure_selection();
+        if let (Some(path), false) = (app.path.clone(), smoke) {
+            app.remember_recent(&path);
+            app.check_media();
+        }
         file::launch(
             FileAction::Recovery(0, app.path.clone()),
             app.tx.clone(),
@@ -525,13 +535,14 @@ impl LumenApp {
                 self.active_open = Some(id);
                 self.modal = true;
                 file::launch(
-                    FileAction::Open(id),
+                    FileAction::Open(id, self.open_path.take()),
                     self.tx.clone(),
                     self.repaint_ctx.clone(),
                 );
                 self.status = "Choose a project...".into();
             }
             Pending::New => {
+                self.missing_media.clear();
                 self.media.stop();
                 self.active_import = None;
                 self.reset_adds();
@@ -612,7 +623,7 @@ impl LumenApp {
         std::thread::spawn(move || {
             let result = rfd::FileDialog::new()
                 .set_file_name("Show.lumen.json")
-                .add_filter("Lumen project", &["lumen.json"])
+                .add_filter("Lumen project", &["json"])
                 .save_file()
                 .map(|p| {
                     lumen_core::save_project(&p, &snapshot)
@@ -625,6 +636,72 @@ impl LumenApp {
             ));
             repaint_ctx.request_repaint();
         });
+    }
+    fn save_with_media(&mut self) {
+        if self.active_save.is_some() {
+            return;
+        }
+        self.operation_counter = self.operation_counter.wrapping_add(1);
+        self.active_save = Some((self.operation_counter, self.pending_id));
+        self.status = "Choose a name for the show folder...".into();
+        file::launch(
+            FileAction::SaveWithMedia(self.operation_counter, Box::new(self.project.clone())),
+            self.tx.clone(),
+            self.repaint_ctx.clone(),
+        );
+    }
+    /// Counts the open show's missing files on a worker; the answer lands in `missing_media`.
+    fn check_media(&mut self) {
+        file::launch(
+            FileAction::CheckMedia(self.project_epoch, Box::new(self.project.clone())),
+            self.tx.clone(),
+            self.repaint_ctx.clone(),
+        );
+    }
+    fn remember_recent(&mut self, path: &std::path::Path) {
+        // `--project show.json` is relative to a folder the next launch will not be in.
+        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        self.settings.remember_project(&path);
+        self.persist_settings();
+    }
+    fn missing_media_banner(&mut self, ctx: &Context) {
+        if self.missing_media.is_empty() {
+            return;
+        }
+        let count = self.missing_media.len();
+        let (mut locate, mut dismiss) = (false, false);
+        egui::TopBottomPanel::top("missing-media-banner").show(ctx, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.colored_label(
+                    crate::style::WARN,
+                    format!(
+                        "{count} media file{} {} missing —",
+                        if count == 1 { "" } else { "s" },
+                        if count == 1 { "is" } else { "are" }
+                    ),
+                )
+                .on_hover_text(
+                    self.missing_media
+                        .iter()
+                        .take(12)
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
+                locate = ui.button("Locate folder…").clicked();
+                dismiss = ui.button("Dismiss").clicked();
+            });
+        });
+        if locate {
+            file::launch(
+                FileAction::PickRelinkFolder(self.project_epoch),
+                self.tx.clone(),
+                self.repaint_ctx.clone(),
+            );
+        }
+        if dismiss {
+            self.missing_media.clear();
+        }
     }
     fn poll_files(&mut self) {
         while let Ok(result) = self.rx.try_recv() {
@@ -657,6 +734,8 @@ impl LumenApp {
                     self.audio.stop();
                     self.transition = None;
                     self.recovered = None;
+                    self.remember_recent(&p);
+                    self.check_media();
                     self.path = Some(p);
                     self.operation_counter = self.operation_counter.wrapping_add(1);
                     self.active_recovery = self.operation_counter;
@@ -712,6 +791,7 @@ impl LumenApp {
                         Ok((path, snapshot)) => {
                             self.saved_operation = id;
                             let old_recovery = crate::recovery::recovery_path(self.path.as_deref());
+                            self.remember_recent(&path);
                             self.path = Some(path);
                             self.saved_project = snapshot.clone();
                             if !self.recovery_busy
@@ -747,6 +827,43 @@ impl LumenApp {
                                         .into();
                             }
                         }
+                    }
+                }
+                FileResult::MediaProgress(id, done, total)
+                    if self.active_save.is_some_and(|(active, _)| active == id) =>
+                {
+                    self.status = format!("Copying media {} of {total}…", done + 1);
+                }
+                FileResult::MediaCopied(id, original, rewritten, note)
+                    if self.active_save.is_some_and(|(active, _)| active == id) =>
+                {
+                    // The show now points at its copies, unless it was edited while copying.
+                    if self.project == *original {
+                        self.project = *rewritten;
+                        self.history.clear();
+                        self.edit_focus = None;
+                        self.history_applied = true;
+                        self.missing_media.clear();
+                    }
+                    if !note.is_empty() {
+                        self.error = note;
+                    }
+                }
+                FileResult::MediaProgress(..) | FileResult::MediaCopied(..) => {}
+                FileResult::MissingMedia(epoch, missing) => {
+                    if epoch == self.project_epoch {
+                        self.missing_media = missing;
+                    }
+                }
+                FileResult::RelinkIndex(epoch, index) => {
+                    if let (Some(index), true) = (index, epoch == self.project_epoch) {
+                        let (found, missing) =
+                            lumen_core::portable::relink(&mut self.project, &index);
+                        self.status = format!(
+                            "Relinked {found} media file{}; {missing} still missing",
+                            if found == 1 { "" } else { "s" }
+                        );
+                        self.check_media();
                     }
                 }
                 FileResult::Open(_, _) | FileResult::Save(_, _) => {}
@@ -1085,6 +1202,7 @@ impl eframe::App for LumenApp {
         }
         self.shortcuts(ctx);
         self.recovery_banner(ctx);
+        self.missing_media_banner(ctx);
         self.toolbar(ctx);
         egui::TopBottomPanel::bottom("status")
             .exact_height(26.0)
@@ -1433,15 +1551,53 @@ impl LumenApp {
                             ui.close();
                         }
                         if ui.button("Open…").clicked() {
+                            self.open_path = None;
                             self.request(Pending::Open);
                             ui.close();
                         }
+                        let recent: Vec<PathBuf> = self
+                            .settings
+                            .recent_projects
+                            .iter()
+                            .filter(|p| p.is_file())
+                            .cloned()
+                            .collect();
+                        if !recent.is_empty() {
+                            ui.separator();
+                            ui.weak("Open recent");
+                        }
+                        for path in &recent {
+                            let name = path.file_name().unwrap_or_default().to_string_lossy();
+                            if ui
+                                .button(name.as_ref())
+                                .on_hover_text(path.display().to_string())
+                                .clicked()
+                            {
+                                self.open_path = Some(path.clone());
+                                self.request(Pending::Open);
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
                         if ui.button("Save").clicked() {
                             self.save(false);
                             ui.close();
                         }
                         if ui.button("Save as…").clicked() {
                             self.save(true);
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.active_save.is_none(),
+                                egui::Button::new("Save with media…"),
+                            )
+                            .on_hover_text(
+                                "Copies every photo, video, sound and deck next to the show so it moves between Macs",
+                            )
+                            .clicked()
+                        {
+                            self.save_with_media();
                             ui.close();
                         }
                         if ui

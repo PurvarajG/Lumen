@@ -34,8 +34,28 @@ use app::LumenApp;
 use lumen_core::{Project, load_project, save_project};
 
 enum Mode {
-    Gui(Option<PathBuf>, Project),
+    /// Path, project and a notice for the operator (empty when there is none).
+    Gui(Option<PathBuf>, Project, String),
     Smoke(Option<PathBuf>, Project),
+}
+
+/// The most recent show, so a relaunch picks up where the last service left off. A show that
+/// has gone missing is skipped quietly; one that fails to load is reported and the demo opens.
+fn reopen_last() -> (Option<PathBuf>, Project, String) {
+    let last = settings::settings_path()
+        .map(|p| settings::Settings::load(&p).settings.recent_projects)
+        .and_then(|recent| recent.into_iter().find(|path| path.is_file()));
+    match last {
+        Some(path) => match load_project(&path) {
+            Ok(project) => (Some(path), project, String::new()),
+            Err(e) => (
+                None,
+                Project::demo(),
+                format!("Couldn't reopen {}: {e}", path.display()),
+            ),
+        },
+        None => (None, Project::demo(), String::new()),
+    }
 }
 
 fn parse() -> Result<Mode, String> {
@@ -81,11 +101,13 @@ fn parse() -> Result<Mode, String> {
     } else {
         None
     };
-    let loaded = loaded.unwrap_or_else(Project::demo);
-    Ok(if smoke {
-        Mode::Smoke(project, loaded)
-    } else {
-        Mode::Gui(project, loaded)
+    Ok(match (loaded, smoke) {
+        (loaded, true) => Mode::Smoke(project, loaded.unwrap_or_else(Project::demo)),
+        (Some(loaded), false) => Mode::Gui(project, loaded, String::new()),
+        (None, false) => {
+            let (path, loaded, notice) = reopen_last();
+            Mode::Gui(path, loaded, notice)
+        }
     })
 }
 
@@ -119,9 +141,9 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let (path, project, smoke) = match mode {
-        Mode::Gui(p, project) => (p, project, false),
-        Mode::Smoke(p, project) => (p, project, true),
+    let (path, project, smoke, notice) = match mode {
+        Mode::Gui(p, project, notice) => (p, project, false, notice),
+        Mode::Smoke(p, project) => (p, project, true, String::new()),
     };
     let native = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -134,7 +156,11 @@ fn main() -> ExitCode {
     match eframe::run_native(
         "Lumen Presenter",
         native,
-        Box::new(move |cc| Ok(Box::new(LumenApp::new(cc, project, path, smoke)))),
+        Box::new(move |cc| {
+            let mut app = LumenApp::new(cc, project, path, smoke);
+            app.error = notice;
+            Ok(Box::new(app))
+        }),
     ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

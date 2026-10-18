@@ -8,19 +8,26 @@ use crate::{CoreError, Project, SCHEMA_VERSION};
 
 const MAX_PROJECT_BYTES: u64 = 16 * 1024 * 1024;
 
+fn show_folder(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+/// Saves atomically. Paths inside the show file's folder are written relative to it so the
+/// folder can move; in memory every path stays absolute (see `load_project`).
 pub fn save_project(path: &Path, project: &Project) -> Result<(), CoreError> {
     project.validate()?;
-    let bytes = serde_json::to_vec_pretty(project)?;
+    let mut stored = project.clone();
+    crate::portable::make_relative(&mut stored, show_folder(path));
+    let bytes = serde_json::to_vec_pretty(&stored)?;
     if bytes.len() as u64 > MAX_PROJECT_BYTES {
         return Err(CoreError::ProjectTooLarge {
             actual: bytes.len() as u64,
             maximum: MAX_PROJECT_BYTES,
         });
     }
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
+    let parent = show_folder(path);
     let mut tempfile = tempfile::NamedTempFile::new_in(parent)
         .map_err(|source| io_error("creating temporary project file", source))?;
     tempfile
@@ -39,6 +46,7 @@ pub fn save_project(path: &Path, project: &Project) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// Loads a show; relative paths resolve against the show file's folder, absolute ones are kept.
 pub fn load_project(path: &Path) -> Result<Project, CoreError> {
     let file = File::open(path).map_err(|source| io_error("opening project file", source))?;
     let size = file
@@ -64,6 +72,7 @@ pub fn load_project(path: &Path) -> Result<Project, CoreError> {
     let mut project: Project = serde_json::from_slice(&bytes)?;
     migrate(&mut project)?;
     project.validate()?;
+    crate::portable::make_absolute(&mut project, show_folder(path));
     Ok(project)
 }
 
