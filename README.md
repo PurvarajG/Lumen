@@ -6,26 +6,40 @@ Full ProPresenter parity is a long-term goal; see [the parity tracker](docs/PARI
 
 ---
 
-## Installation & First Run
+## Download
 
-### Installing from DMG
-1. Mount the release image: `Lumen-Presenter-1.0.0-rc.3-macos-arm64.dmg` (located in `.local/dist/` or project releases).
-2. Drag **Lumen Presenter.app** into `/Applications`.
-3. **macOS Gatekeeper note:** The release build is ad-hoc signed for local operation (commercial Apple Developer ID notarization is pending). On first run, right-click (or Control-click) **Lumen Presenter.app** in Finder and choose **Open**, or run:
+**[Download Lumen Presenter 1.0.0-rc.5 for Mac (DMG)](https://github.com/PurvarajG/Lumen/releases/download/v1.0.0-rc.5/Lumen-Presenter-1.0.0-rc.5-macos-arm64.dmg)** · [all versions and release notes](https://github.com/PurvarajG/Lumen/releases)
+
+- Needs a Mac with Apple Silicon (M1 or newer) running macOS 12 or later.
+- Video needs FFmpeg: `brew install ffmpeg`.
+- Every release page lists the SHA-256 of its DMG so you can check the download.
+- No account, no cloud. Scripture books are downloaded on your Mac when you ask for them and are never bundled.
+
+### Install
+1. Open the downloaded `.dmg` and drag **Lumen Presenter** into **Applications**.
+2. **First launch:** the app is signed for local use but not yet notarized by Apple, so macOS blocks a plain double-click. Right-click (or Control-click) **Lumen Presenter** in Applications, choose **Open**, then **Open** again. You only do this once. If macOS still refuses, run this in Terminal, then open the app normally:
    ```sh
    xattr -cr "/Applications/Lumen Presenter.app"
    ```
+3. Connect the projector or TV, then click **Audience** in the header and pick the display in **Outputs**.
 
-### First Run & Operator Workflow
-- **Present Mode (Default):** Streamlined operator layout for live services.
-  - **Left Sidebar:** Search across books, library, and playlists; tabs for running order, library cues, and downloaded scripture books.
-  - **Center:** Large preview of the selected ("up next") cue with its saffron highlight, and the 16:9 cue grid with live status indicators.
-  - **Right Column:** Audience output monitor (what the congregation sees with a red LIVE indicator), live transport controls, and tabbed utilities (Timers, Messages, Props, Audio, Stage tools).
-- **Prepare Mode:** Swaps inspector tools for slide editing, object styling, typography, background media assignment, and transition configuration.
-- **Preview vs Live Isolation:** Selecting or editing a cue immediately updates the preview area without affecting live output. Pressing `Return` or clicking **Go live** triggers a cloned snapshot to the audience screen.
-- **Output Windows:**
-  - **Audience:** Clean fullscreen or windowed output for projectors and TVs.
-  - **Stage:** Dedicated confidence monitor display showing current slide, next slide, presenter notes, live clocks, and urgent stage messages.
+---
+
+## Using Lumen
+
+### Layout
+The window is a set of six panels you can move: **Running order**, **Macros**, **Preview**, **Cues**, **Live** and **Tools** (called **Inspector** in Prepare). Drag a panel's tab to another panel's edge to split it or onto its tab bar to stack it, and drag the dividers to resize. Prepare and Present each remember their own arrangement, and **Reset layout** in the header puts the current mode back to the default.
+
+- **Present** (default): Running order on the left; a large **Preview** of the next cue above the **Cues** grid in the middle; the **Live** monitor with the transport buttons above **Tools** (Timers, Messages, Overlays, Audio, Stage) on the right.
+- **Prepare:** a big running order over Macros, a small Preview above a large Cues grid, and the slide Inspector (text, style, background, transition, actions) on the right with Live as a second tab.
+- **Preview and live are separate.** Selecting or editing a cue only changes the Preview. `Return`, `Space` or **Go live** sends a copy to the audience screen.
+
+### Photos and videos
+Photos and videos that are not 16:9 show with bars by default. Right-click a cue (or a running-order row) and pick **Scale**: **Fit (show bars)**, **Fill screen (crop)** or **Stretch**. The Prepare inspector has the same choice. A change takes effect the next time the cue goes live. Video frames are timed to the audience display's own refresh; a 25 fps clip is smoothest on a 75 Hz projector, and 30 fps content is smoothest at 60 Hz.
+
+### Output windows
+- **Audience:** clean fullscreen or windowed output for projectors and TVs.
+- **Stage:** a confidence monitor with the current slide, the next slide, notes, clocks and urgent messages.
 
 ---
 

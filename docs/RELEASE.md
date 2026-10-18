@@ -77,6 +77,23 @@ Publish both the `.dmg` and `.sha256` files in the GitHub release or distributio
 
 ---
 
+## 4b. Publishing the Download
+
+Each release is a GitHub release with its DMG attached; that page is the download link people are sent to.
+
+1. Push the release commit to `main`.
+2. Publish the release (pre-release while the version has `-rc`) with the DMG and its SHA-256 in the notes:
+   ```sh
+   gh release create v1.0.0-rc.5 .local/dist/Lumen-Presenter-1.0.0-rc.5-macos-arm64.dmg \
+     --repo PurvarajG/Lumen --target main --prerelease \
+     --title "Lumen Presenter 1.0.0-rc.5" --notes-file notes.md
+   ```
+3. Update the **Download** link at the top of `README.md` to the new version's DMG
+   (`https://github.com/PurvarajG/Lumen/releases/download/v<version>/Lumen-Presenter-<version>-macos-arm64.dmg`).
+   GitHub's `releases/latest` address skips pre-releases, so the README links the version directly.
+
+---
+
 ## 5. Code Signing & Apple Notarization
 
 ### Current Status: Ad-hoc Signed
