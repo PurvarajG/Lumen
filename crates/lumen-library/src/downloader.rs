@@ -255,6 +255,21 @@ fn fetch_with_retry(
     }
 }
 
+fn fetch_page(
+    fetcher: &dyn HttpFetcher,
+    url: &str,
+    last_req: &mut Option<Instant>,
+    last_page: &mut Option<(String, String)>,
+    cancel: &Arc<AtomicBool>,
+) -> Result<String, LibraryError> {
+    if let Some((_, html)) = last_page.as_ref().filter(|(u, _)| u == url) {
+        return Ok(html.clone());
+    }
+    let html = fetch_with_retry(fetcher, url, last_req, cancel)?;
+    *last_page = Some((url.to_string(), html.clone()));
+    Ok(html)
+}
+
 fn run_download(
     book_id: &str,
     cache_dir: &Path,
@@ -280,6 +295,8 @@ fn run_download(
     };
 
     let mut last_request: Option<Instant> = None;
+    // Units are ordered, so consecutive units usually share one page (diksha 5, vato 10).
+    let mut last_page: Option<(String, String)> = None;
     let mut completed_units = 0;
     let mut collected_units = Vec::new();
 
@@ -312,10 +329,20 @@ fn run_download(
         let unit_ref = UnitRef::new(book_id, &item.key);
         let parsed_unit = match item.strategy {
             FetchStrategy::Vachanamrut { gu_url, en_url } => {
-                let gu_html =
-                    fetch_with_retry(fetcher.as_ref(), &gu_url, &mut last_request, &cancel)?;
-                let en_html =
-                    fetch_with_retry(fetcher.as_ref(), &en_url, &mut last_request, &cancel)?;
+                let gu_html = fetch_page(
+                    fetcher.as_ref(),
+                    &gu_url,
+                    &mut last_request,
+                    &mut last_page,
+                    &cancel,
+                )?;
+                let en_html = fetch_page(
+                    fetcher.as_ref(),
+                    &en_url,
+                    &mut last_request,
+                    &mut last_page,
+                    &cancel,
+                )?;
                 let gu_u = crate::parse::parse_vachanamrut_page(&gu_html, "gu", &unit_ref)?;
                 let en_u = crate::parse::parse_vachanamrut_page(&en_html, "en", &unit_ref)?;
                 let (merged, warn) = crate::parse::merge_vachanamrut_units(gu_u, en_u);
@@ -325,7 +352,13 @@ fn run_download(
                 merged
             }
             FetchStrategy::SinglePage { url, parser } => {
-                let html = fetch_with_retry(fetcher.as_ref(), &url, &mut last_request, &cancel)?;
+                let html = fetch_page(
+                    fetcher.as_ref(),
+                    &url,
+                    &mut last_request,
+                    &mut last_page,
+                    &cancel,
+                )?;
                 parser(&html, &unit_ref)?
             }
         };

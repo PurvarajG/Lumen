@@ -187,3 +187,30 @@ fn test_downloader_cancel_stops_promptly() {
     // Drop also cancels
     drop(handle);
 }
+
+#[test]
+fn test_downloader_fetches_shared_page_once() {
+    let dir = tempdir().unwrap();
+    let fake = Arc::new(FakeFetcher::new());
+    let page = |range: std::ops::RangeInclusive<usize>| {
+        range
+            .map(|n| {
+                format!(
+                    r#"<div class="shloks_wrap" id="shlok_wrap_{n}"><div class="gujarati_sans_html"><p class="shlok_gu">શ્લોક {n}</p></div></div>"#
+                )
+            })
+            .collect::<String>()
+    };
+    let url =
+        |base: usize| format!("https://www.anirdesh.com/diksha/index.php?shlok={base}&increment=5");
+    fake.set_response(&url(1), Ok(page(1..=5)));
+    fake.set_response(&url(6), Ok(page(6..=10)));
+
+    let (tx, rx) = channel();
+    let _handle = Downloader::start_with_limit("diksha", dir.path(), tx, fake.clone(), Some(10));
+    let finished = rx
+        .iter()
+        .any(|e| matches!(e, DownloadEvent::Finished(s) if s.units == 10));
+    assert!(finished);
+    assert_eq!(fake.fetch_count.load(Ordering::SeqCst), 2);
+}
