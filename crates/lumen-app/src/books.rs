@@ -1589,6 +1589,45 @@ mod tests {
         std::fs::write(dir.join("book.json"), serde_json::to_vec(&book).unwrap()).unwrap();
     }
 
+    /// Measurement, not a check: `LUMEN_BOOKS_DIR=.local/books cargo test --release -p lumen-app
+    /// -- --ignored --nocapture all_books_load`.
+    #[test]
+    #[ignore]
+    fn all_books_load_and_index_within_budget() {
+        let dir = std::env::var_os("LUMEN_BOOKS_DIR")
+            .map(PathBuf::from)
+            .unwrap();
+        let start = std::time::Instant::now();
+        let loaded = load_installed(None, Some(&dir));
+        eprintln!(
+            "LOAD+INDEX {:?} books={} units={} errors={:?}",
+            start.elapsed(),
+            loaded.books.len(),
+            loaded.books.iter().map(|b| b.units.len()).sum::<usize>(),
+            loaded.errors
+        );
+        let t = std::time::Instant::now();
+        let hits = loaded.index.search("Gadhada I-1", 5);
+        eprintln!(
+            "SEARCH {:?} first={:?}",
+            t.elapsed(),
+            hits.first().map(|h| (&h.book, &h.unit_key))
+        );
+    }
+
+    #[test]
+    fn failed_downloads_are_appended_to_the_log() {
+        let root = std::env::temp_dir().join(format!("lumen-log-{}", Uuid::new_v4()));
+        log_failure(&root, "kirtan", "HTTP error status: 403");
+        log_failure(&root, "diksha", "Layout error");
+        let log = std::fs::read_to_string(root.join("download.log")).unwrap();
+        let lines: Vec<_> = log.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].ends_with("kirtan: HTTP error status: 403"));
+        assert!(lines[1].contains("diksha: Layout error"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn bundled_books_fill_in_for_missing_ones_and_the_users_copy_wins() {
         let base = std::env::temp_dir().join(format!("lumen-bundled-{}", Uuid::new_v4()));

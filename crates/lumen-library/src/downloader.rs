@@ -359,7 +359,23 @@ fn run_download(
                     &mut last_page,
                     &cancel,
                 )?;
-                parser(&html, &unit_ref)?
+                match parser(&html, &unit_ref) {
+                    Ok(unit) => unit,
+                    // Kirtan numbers have gaps: a missing one serves the site's landing page.
+                    Err(LibraryError::Layout { .. }) if book_id == "kirtan" => {
+                        let _ = events.send(DownloadEvent::Warning(format!(
+                            "Kirtan {} is not on the site; skipped",
+                            item.key
+                        )));
+                        completed_units += 1;
+                        let _ = events.send(DownloadEvent::Progress {
+                            done: completed_units,
+                            total: total_plan_units,
+                        });
+                        continue;
+                    }
+                    Err(err) => return Err(err),
+                }
             }
         };
 
@@ -858,7 +874,12 @@ mod tests {
     fn download_plans_match_the_catalog_unit_counts() {
         for info in catalog() {
             let plan = build_download_plan(info.id).expect(info.id);
-            assert_eq!(plan.len(), info.units, "{}", info.id);
+            // Kirtan numbers have gaps the plan cannot know about; it is an upper bound.
+            if info.id == "kirtan" {
+                assert!(plan.len() >= info.units, "{}", info.id);
+            } else {
+                assert_eq!(plan.len(), info.units, "{}", info.id);
+            }
         }
     }
 }

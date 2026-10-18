@@ -214,3 +214,28 @@ fn test_downloader_fetches_shared_page_once() {
     assert!(finished);
     assert_eq!(fake.fetch_count.load(Ordering::SeqCst), 2);
 }
+
+#[test]
+fn test_kirtan_gap_is_skipped_with_a_warning() {
+    let dir = tempdir().unwrap();
+    let fake = Arc::new(FakeFetcher::new());
+    let kirtan =
+        r#"<h1 id="title_gu">કીર્તન</h1><div id="text_gu"><p class="k_line_gu">પંક્તિ</p></div>"#;
+    let url = |no: usize| format!("https://www.anirdesh.com/kirtan/index.php?part=1&no={no}");
+    fake.set_response(&url(1), Ok(kirtan.into()));
+    fake.set_response(&url(2), Ok("<html><h2>Welcome</h2></html>".into())); // the landing page
+    fake.set_response(&url(3), Ok(kirtan.into()));
+
+    let (tx, rx) = channel();
+    let _handle = Downloader::start_with_limit("kirtan", dir.path(), tx, fake, Some(3));
+    let events: Vec<_> = rx
+        .iter()
+        .take_while(|e| !matches!(e, DownloadEvent::Finished(_) | DownloadEvent::Failed(_)))
+        .collect();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, DownloadEvent::Warning(w) if w.contains("1-2")))
+    );
+    assert_eq!(load_book(dir.path(), "kirtan").unwrap().units.len(), 2);
+}

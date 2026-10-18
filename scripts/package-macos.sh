@@ -61,13 +61,17 @@ cp "$PROJECT_ROOT/crates/lumen-text/fonts/Poppins-OFL.txt" "$RESOURCES/Poppins-O
 if [ "$WITH_BOOKS" = 1 ]; then
     BOOKS_SRC="$PROJECT_ROOT/.local/books"
     BOOK_IDS=$(sed -n 's/^ *id: "\([a-z-]*\)",$/\1/p' "$PROJECT_ROOT/crates/lumen-library/src/model.rs")
+    # ALLOW_MISSING_BOOKS="id id" lets a known-broken book (see docs/STATUS.md) stay out of a release.
     for id in $BOOK_IDS; do
         if [ ! -f "$BOOKS_SRC/$id/book.json" ]; then
-            echo "Missing book '$id' in $BOOKS_SRC. Run the fetch_books step in docs/RELEASE.md, or pass --without-books." >&2
-            exit 1
+            case " ${ALLOW_MISSING_BOOKS-} " in
+                *" $id "*) echo "NOTE: book '$id' is not included (allowed by ALLOW_MISSING_BOOKS)" >&2 ;;
+                *) echo "Missing book '$id' in $BOOKS_SRC. Run the fetch_books step in docs/RELEASE.md, set ALLOW_MISSING_BOOKS=\"$id\", or pass --without-books." >&2; exit 1 ;;
+            esac
         fi
     done
     for id in $BOOK_IDS; do
+        [ -f "$BOOKS_SRC/$id/book.json" ] || continue
         mkdir -p "$RESOURCES/Books/$id"
         cp "$BOOKS_SRC/$id/book.json" "$RESOURCES/Books/$id/book.json"
     done

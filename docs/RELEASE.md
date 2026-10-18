@@ -46,7 +46,7 @@ The book texts are copyright Anirdesh.com / BAPS and are included with their per
 cargo run --release -p lumen-library --example fetch_books -- .local/books > .local/books/fetch.log 2>&1
 ```
 
-It downloads the 15 catalog books one after another at about one request a second (about 1.5 hours the first time), skips books that are already complete and resumes interrupted ones. If a book fails, `fetch.log` names it; rerun to retry. `scripts/package-macos.sh --release` refuses to build when a book is missing; pass `--without-books` for a quick development package.
+It downloads the 15 catalog books one after another at about one request a second (about 1.5 hours the first time), skips books that are already complete and resumes interrupted ones. If a book fails, `fetch.log` names it; rerun to retry. `scripts/package-macos.sh --release` refuses to build when a book is missing. A book that is known to be broken can be left out on purpose with `ALLOW_MISSING_BOOKS="id id"` (the packager prints a note); pass `--without-books` for a quick development package.
 
 ---
 
