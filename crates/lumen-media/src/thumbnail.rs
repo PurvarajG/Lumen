@@ -9,13 +9,13 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-const MAX_DIMENSION: u32 = 1024;
+const MAX_DIMENSION: u32 = 1920;
 const THUMBNAIL_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub fn thumbnail(path: &Path, max_w: u32, max_h: u32) -> Result<Frame, MediaError> {
     if max_w == 0 || max_h == 0 || max_w > MAX_DIMENSION || max_h > MAX_DIMENSION {
         return Err(MediaError::InvalidOptions(
-            "thumbnail dimensions must be within 1×1 and 1024×1024".into(),
+            "thumbnail dimensions must be within 1×1 and 1920×1920".into(),
         ));
     }
     validate_file(path)?;
@@ -357,7 +357,12 @@ mod tests {
         std::fs::write(&garbage, b"not an image").unwrap();
         assert!(thumbnail(&garbage, 64, 64).is_err());
         assert!(matches!(
-            thumbnail(&garbage, 1025, 10),
+            thumbnail(&garbage, 1921, 10),
+            Err(MediaError::InvalidOptions(_))
+        ));
+        // The big Preview asks for 1280×720; that is within bounds, so it fails on the file.
+        assert!(!matches!(
+            thumbnail(&garbage, 1280, 720),
             Err(MediaError::InvalidOptions(_))
         ));
     }

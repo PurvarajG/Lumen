@@ -527,9 +527,14 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
     let height = preview_height(ui.available_width(), ui.available_height());
     // One snapshot per call; cloning the map per tile was O(tiles x thumbnails).
     let images = app.thumbnails.images();
-    let still = preview
+    let small = preview
         .as_ref()
         .and_then(|p| app.thumbnail(&p.slide.background));
+    // The grid thumbnail shows at once; the sharper one replaces it when it arrives.
+    let still = preview
+        .as_ref()
+        .and_then(|p| app.thumbnail_large(&p.slide.background))
+        .or(small);
     // Only the live background has live frames; any other cue shows its still.
     let on_air = preview.as_ref().is_some_and(|p| {
         !app.runtime.output.media_cleared

@@ -2051,6 +2051,14 @@ impl LumenApp {
         self.thumbnails.request(path);
         self.thumbnails.texture(path).cloned()
     }
+    /// The big Preview's sharper still; `None` until it has loaded, so callers fall back to `thumbnail`.
+    pub(super) fn thumbnail_large(&mut self, background: &Background) -> Option<TextureHandle> {
+        let (Background::Image { path } | Background::Video { path, .. }) = background else {
+            return None;
+        };
+        self.thumbnails.request_large(path);
+        self.thumbnails.large_texture(path).cloned()
+    }
     fn queue_object_images(&mut self) {
         for object in self
             .project

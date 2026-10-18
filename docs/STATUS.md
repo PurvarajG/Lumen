@@ -104,3 +104,9 @@ Console LIVE monitor while the audience plays: 118 distinct pictures in 4 s (29.
 The plan's 95% targets are not reached on every run. The residue is the display not being an exact multiple of the clip rate (74.8 Hz against 75 nominal, and a ProMotion laptop panel): the phase between frame times and refreshes drifts through the one-quarter-refresh margin every few seconds, where timing noise flips frames. A phase-locked clock that tracks the pass times would fix that; it is not in this wave.
 
 Tip for the operator: a 75 Hz projector can never show 30 fps evenly; the best is alternating 2- and 3-refresh frames. If most content is 30/60 fps, set the L27q to 60 Hz in System Settings → Displays. 25 fps content divides into 75 Hz exactly.
+
+### G2.2 Sharp Preview
+
+- `lumen-media` thumbnails may now be up to 1920×1920 (was 1024). `ThumbnailState` has a second tier: `request_large` / `large_texture`, at most 1280×720, 6 textures (LRU), on the same three workers (each keeps only 2 large frames in its decode cache). Grid and running-order thumbnails still use the 320×180 tier, and `images()` still returns only that tier. Failures and retries follow the small tier's rules.
+- The big Preview shows the grid thumbnail at once and swaps to the large one when it arrives; the live-texture rule is unchanged and still comes first.
+- Verified natively (laptop window captures, same crop of the Preview, variance of the Laplacian via `magick`): photo cue 1.66e9 → 6.79e9, video cue 1.01e9 → 4.02e9 (about 4× sharper). A capture right after selecting a cue shows the small image (1.66e9), one 0.5 s later the sharp one.
