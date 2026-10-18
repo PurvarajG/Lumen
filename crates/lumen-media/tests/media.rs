@@ -72,7 +72,7 @@ fn rejects_invalid_inputs_and_options() {
 }
 
 #[test]
-fn probes_and_decodes_generated_media_with_letterbox_size() {
+fn probes_and_decodes_generated_media_at_fitted_size() {
     if !tools_available() {
         eprintln!("SKIP: required FFmpeg tools unavailable");
         return;
@@ -83,10 +83,11 @@ fn probes_and_decodes_generated_media_with_letterbox_size() {
     assert_eq!((info.width, info.height), (96, 54));
     assert!(info.duration_secs.unwrap() > 1.0);
     assert!(!info.has_audio);
+    assert_eq!(info.fps, Some(12.0));
     let player = MediaPlayer::open(&path, options(false)).unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
     let frame = loop {
-        if let Some(frame) = player.latest_frame() {
+        if let Some(frame) = player.take_frame() {
             break frame;
         }
         assert!(
@@ -97,9 +98,16 @@ fn probes_and_decodes_generated_media_with_letterbox_size() {
         assert!(Instant::now() < deadline, "first frame timed out");
         thread::sleep(Duration::from_millis(10));
     };
-    assert_eq!((frame.width, frame.height), (64, 64));
-    assert_eq!(frame.rgba.len(), 64 * 64 * 4);
+    // 96x54 fitted into 64x64 keeps its aspect ratio; no letterbox bars.
+    assert_eq!((frame.width, frame.height), (64, 36));
+    assert_eq!(frame.rgba.len(), 64 * 36 * 4);
     assert!(frame.sequence > 0);
+    assert!(
+        player
+            .take_frame()
+            .is_none_or(|next| next.sequence > frame.sequence),
+        "a taken frame must not be handed out twice"
+    );
 }
 
 #[test]
@@ -121,7 +129,7 @@ fn non_looping_playback_finishes_and_stop_is_idempotent() {
         "playback error: {:?}",
         player.error()
     );
-    assert!(player.latest_frame().is_some());
+    assert!(player.take_frame().is_some());
     player.stop();
     player.stop();
 }
@@ -136,19 +144,20 @@ fn pause_and_drop_clean_up_owned_children() {
     let path = make_video(dir.path(), "long.mp4", 8.0, false);
     let mut player = MediaPlayer::open(&path, options(true)).unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
-    while player.latest_frame().is_none() {
+    while player.take_frame().is_none() {
         assert!(Instant::now() < deadline, "first frame timed out");
         thread::sleep(Duration::from_millis(10));
     }
-    let sequence = player.latest_frame().unwrap().sequence;
     player.set_paused(true).unwrap();
     assert!(player.is_paused());
+    thread::sleep(Duration::from_millis(100)); // let an in-flight frame land
+    let _ = player.take_frame();
     thread::sleep(Duration::from_millis(180));
-    assert_eq!(player.latest_frame().unwrap().sequence, sequence);
+    assert!(player.take_frame().is_none(), "frames arrived while paused");
     player.set_paused(false).unwrap();
     assert!(!player.is_paused());
     let deadline = Instant::now() + Duration::from_secs(2);
-    while player.latest_frame().unwrap().sequence == sequence {
+    while player.take_frame().is_none() {
         assert!(Instant::now() < deadline, "decoder did not resume");
         thread::sleep(Duration::from_millis(10));
     }

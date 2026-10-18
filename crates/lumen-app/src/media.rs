@@ -18,7 +18,6 @@ pub struct MediaState {
     pub image_texture: Option<TextureHandle>,
     pub video_path: Option<PathBuf>,
     pub player: Option<MediaPlayer>,
-    pub sequence: u64,
     pub status: String,
     pub pending: bool,
     request: u64,
@@ -36,7 +35,6 @@ impl Default for MediaState {
             image_texture: None,
             video_path: None,
             player: None,
-            sequence: 0,
             status: String::new(),
             pending: false,
             request: 0,
@@ -107,9 +105,9 @@ impl MediaState {
             let res = MediaPlayer::open(
                 &path,
                 PlaybackOptions {
-                    width: 1280,
-                    height: 720,
-                    fps: 30,
+                    width: 1920,
+                    height: 1080,
+                    fps: 60,
                     looped,
                     muted,
                 },
@@ -161,7 +159,6 @@ impl MediaState {
                     }
                     self.image_texture = None;
                     self.image_path = None;
-                    self.sequence = 0;
                     self.video_path = Some(p);
                     self.status = "Video playing".into();
                 }
@@ -176,29 +173,18 @@ impl MediaState {
             }
         }
         if let Some(player) = &self.player {
-            if let Some(f) = player.latest_frame()
-                && f.sequence != self.sequence
-            {
+            if let Some(f) = player.take_frame() {
+                // ffmpeg output is opaque, so straight and premultiplied alpha are identical.
+                let image = ColorImage::from_rgba_premultiplied(
+                    [f.width as usize, f.height as usize],
+                    &f.rgba,
+                );
                 if let Some(tex) = self.image_texture.as_mut() {
-                    tex.set(
-                        ColorImage::from_rgba_unmultiplied(
-                            [f.width as usize, f.height as usize],
-                            &f.rgba,
-                        ),
-                        TextureOptions::LINEAR,
-                    )
+                    tex.set(image, TextureOptions::LINEAR)
                 } else {
-                    self.image_texture = Some(ctx.load_texture(
-                        "lumen-video",
-                        ColorImage::from_rgba_unmultiplied(
-                            [f.width as usize, f.height as usize],
-                            &f.rgba,
-                        ),
-                        TextureOptions::LINEAR,
-                    ));
+                    self.image_texture =
+                        Some(ctx.load_texture("lumen-video", image, TextureOptions::LINEAR));
                 }
-                self.sequence = f.sequence;
-                ctx.request_repaint();
             }
             if let Some(e) = player.error() {
                 self.status = format!("Video error: {e}");
@@ -217,7 +203,6 @@ impl MediaState {
         self.video_path = None;
         self.image_path = None;
         self.image_texture = None;
-        self.sequence = 0;
         self.status.clear();
     }
 

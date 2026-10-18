@@ -6,9 +6,16 @@ use std::{
     sync::{
         Arc, Mutex, MutexGuard,
         atomic::{AtomicBool, Ordering},
+        mpsc,
     },
     thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
+
+/// A frame this late means the clock stalled (pause, loop restart, slow decode).
+const REBASE_AFTER: Duration = Duration::from_millis(250);
+/// Frames the reader may decode ahead of the pacer.
+const READ_AHEAD: usize = 3;
 
 #[derive(Clone, Debug)]
 pub struct Frame {
@@ -20,8 +27,10 @@ pub struct Frame {
 
 #[derive(Clone, Debug)]
 pub struct PlaybackOptions {
+    /// Largest decoded size; smaller sources are never upscaled.
     pub width: u32,
     pub height: u32,
+    /// Maximum rate; the source rate is used when it is lower.
     pub fps: u32,
     pub looped: bool,
     pub muted: bool,
@@ -51,7 +60,7 @@ pub struct MediaPlayer {
     error: Arc<Mutex<Option<String>>>,
     finished: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
-    worker: Option<JoinHandle<()>>,
+    workers: Vec<JoinHandle<()>>,
     stderr_readers: Vec<JoinHandle<()>>,
     audio_monitor: Option<JoinHandle<()>>,
     cancel_audio_monitor: Arc<AtomicBool>,
@@ -77,21 +86,23 @@ impl MediaPlayer {
         ffplay_program: &std::ffi::OsStr,
     ) -> Result<Self, MediaError> {
         validate_file(path)?;
-        let frame_len = validate_options(&options)?;
+        validate_options(&options)?;
         let path_arg = path.as_os_str();
         let info = probe_with_program(path, probe_program)?;
+        let (width, height) = fit_size((info.width, info.height), (options.width, options.height));
+        let frame_len = width as usize * height as usize * 4;
+        let fps = info
+            .fps
+            .map_or(30.0, f64::round)
+            .clamp(1.0, f64::from(options.fps)) as u32;
         let mut video = Command::new(ffmpeg_program);
         video.args(["-hide_banner", "-loglevel", "error", "-nostdin"]);
         if options.looped {
             video.args(["-stream_loop", "-1"]);
         }
-        let filter = format!(
-            "scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,fps={}:round=near,format=rgba",
-            options.width, options.height, options.width, options.height, options.fps
-        );
+        let filter = format!("scale={width}:{height},fps={fps}:round=near,format=rgba");
         video
             .args([
-                std::ffi::OsStr::new("-re"),
                 std::ffi::OsStr::new("-i"),
                 path_arg,
                 std::ffi::OsStr::new("-vf"),
@@ -222,8 +233,9 @@ impl MediaPlayer {
         let worker_result = {
             let context = DecoderContext {
                 frame_len,
-                width: options.width,
-                height: options.height,
+                width,
+                height,
+                fps,
                 children: children.clone(),
                 latest: latest.clone(),
                 error: error.clone(),
@@ -231,12 +243,10 @@ impl MediaPlayer {
                 paused: paused.clone(),
                 stderr: video_stderr,
             };
-            thread::Builder::new()
-                .name("lumen-media-video".into())
-                .spawn(move || decode(stdout, context))
+            start_decoder(stdout, context)
         };
-        let worker = match worker_result {
-            Ok(worker) => worker,
+        let workers = match worker_result {
+            Ok(workers) => workers,
             Err(e) => {
                 cancel_audio_monitor.store(true, Ordering::Release);
                 terminate_children(&children);
@@ -257,7 +267,7 @@ impl MediaPlayer {
             error,
             finished,
             paused,
-            worker: Some(worker),
+            workers,
             stderr_readers,
             audio_monitor,
             cancel_audio_monitor,
@@ -265,8 +275,9 @@ impl MediaPlayer {
         })
     }
 
-    pub fn latest_frame(&self) -> Option<Frame> {
-        lock(&self.latest).clone()
+    /// Takes the newest frame, if one has arrived since the last call.
+    pub fn take_frame(&self) -> Option<Frame> {
+        lock(&self.latest).take()
     }
     pub fn error(&self) -> Option<String> {
         lock(&self.error).clone()
@@ -314,7 +325,7 @@ impl MediaPlayer {
         self.paused.store(false, Ordering::Release);
         self.cancel_audio_monitor.store(true, Ordering::Release);
         terminate_children(&self.children);
-        if let Some(worker) = self.worker.take() {
+        for worker in self.workers.drain(..) {
             let _ = worker.join();
         }
         if let Some(monitor) = self.audio_monitor.take() {
@@ -333,7 +344,16 @@ impl Drop for MediaPlayer {
     }
 }
 
-fn validate_options(o: &PlaybackOptions) -> Result<usize, MediaError> {
+/// Largest size that fits `max` with the source aspect ratio, never above the source.
+fn fit_size(src: (u32, u32), max: (u32, u32)) -> (u32, u32) {
+    let scale = (f64::from(max.0) / f64::from(src.0))
+        .min(f64::from(max.1) / f64::from(src.1))
+        .min(1.0);
+    let fit = |v: u32| ((f64::from(v) * scale).round() as u32).max(1);
+    (fit(src.0), fit(src.1))
+}
+
+fn validate_options(o: &PlaybackOptions) -> Result<(), MediaError> {
     if !(1..=3840).contains(&o.width) || !(1..=2160).contains(&o.height) {
         return Err(MediaError::InvalidOptions(
             "dimensions must be within 1×1 and 3840×2160".into(),
@@ -344,12 +364,7 @@ fn validate_options(o: &PlaybackOptions) -> Result<usize, MediaError> {
             "fps must be between 1 and 60".into(),
         ));
     }
-    (o.width as usize)
-        .checked_mul(o.height as usize)
-        .and_then(|n| n.checked_mul(4))
-        .ok_or_else(|| {
-            MediaError::InvalidOptions("frame buffer size overflows address space".into())
-        })
+    Ok(())
 }
 
 fn start_audio_child(
@@ -404,10 +419,12 @@ fn start_audio_child(
     }
 }
 
+#[derive(Clone)]
 struct DecoderContext {
     frame_len: usize,
     width: u32,
     height: u32,
+    fps: u32,
     children: Arc<Mutex<Children>>,
     latest: Arc<Mutex<Option<Frame>>>,
     error: Arc<Mutex<Option<String>>>,
@@ -416,19 +433,39 @@ struct DecoderContext {
     stderr: Arc<Mutex<Vec<u8>>>,
 }
 
-fn decode(mut stdout: impl Read, context: DecoderContext) {
+/// Starts the reader (ffmpeg pipe to frames) and the pacer (frames to `latest` on a steady clock).
+fn start_decoder(
+    stdout: impl Read + Send + 'static,
+    context: DecoderContext,
+) -> std::io::Result<Vec<JoinHandle<()>>> {
+    let (tx, rx) = mpsc::sync_channel(READ_AHEAD);
+    let pacer_context = context.clone();
+    let pacer = thread::Builder::new()
+        .name("lumen-media-pacer".into())
+        .spawn(move || pace(rx, pacer_context))?;
+    // If this spawn fails the closure and `tx` drop, which ends the pacer.
+    match thread::Builder::new()
+        .name("lumen-media-video".into())
+        .spawn(move || read_frames(stdout, tx, context))
+    {
+        Ok(reader) => Ok(vec![reader, pacer]),
+        Err(e) => {
+            let _ = pacer.join();
+            Err(e)
+        }
+    }
+}
+
+fn read_frames(mut stdout: impl Read, tx: mpsc::SyncSender<Vec<u8>>, context: DecoderContext) {
     let DecoderContext {
         frame_len,
-        width,
-        height,
         children,
-        latest,
         error,
         finished,
         paused,
         stderr,
+        ..
     } = context;
-    let mut sequence = 0u64;
     let mut failed = None;
     loop {
         let mut bytes = vec![0; frame_len];
@@ -462,13 +499,9 @@ fn decode(mut stdout: impl Read, context: DecoderContext) {
             }
             break;
         }
-        sequence = sequence.wrapping_add(1);
-        *lock(&latest) = Some(Frame {
-            width,
-            height,
-            rgba: bytes,
-            sequence,
-        });
+        if tx.send(bytes).is_err() {
+            break; // pacer is gone (stop)
+        }
     }
     let status = wait_video_exit(&children, &finished);
     if let Err(e) = &status {
@@ -490,6 +523,64 @@ fn decode(mut stdout: impl Read, context: DecoderContext) {
         if let Some(child) = g.audio.as_mut() {
             let _ = signal_child(child, false);
         }
+    }
+    // Dropping `tx` lets the pacer show the queued frames, then mark playback finished.
+}
+
+fn frame_due(start: Instant, n: u64, fps: u32) -> Instant {
+    start + Duration::from_secs_f64(n as f64 / f64::from(fps))
+}
+
+/// The clock start to use for frame `n` at `now`.
+// shortcut: rebase the clock when >250 ms late (pause, stall); upgrade to PTS-driven timing if A/V drift is reported.
+fn paced_start(start: Instant, n: u64, fps: u32, now: Instant) -> Instant {
+    if now > frame_due(start, n, fps) + REBASE_AFTER {
+        let elapsed = Duration::from_secs_f64(n as f64 / f64::from(fps));
+        now.checked_sub(elapsed).unwrap_or(now)
+    } else {
+        start
+    }
+}
+
+fn pace(rx: mpsc::Receiver<Vec<u8>>, context: DecoderContext) {
+    let DecoderContext {
+        width,
+        height,
+        fps,
+        latest,
+        finished,
+        paused,
+        ..
+    } = context;
+    let mut sequence = 0u64;
+    let mut clock: Option<(Instant, u64)> = None; // (start, frames shown since start)
+    'frames: while let Ok(rgba) = rx.recv() {
+        loop {
+            if finished.load(Ordering::Acquire) {
+                break 'frames;
+            }
+            if paused.load(Ordering::Acquire) {
+                clock = None; // resume re-anchors the clock on the next frame
+                thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+            let now = Instant::now();
+            let (start, n) = clock.get_or_insert((now, 0));
+            *start = paced_start(*start, *n, fps, now);
+            let due = frame_due(*start, *n, fps);
+            if now >= due {
+                *n += 1;
+                break;
+            }
+            thread::sleep((due - now).min(Duration::from_millis(20)));
+        }
+        sequence = sequence.wrapping_add(1);
+        *lock(&latest) = Some(Frame {
+            width,
+            height,
+            rgba,
+            sequence,
+        });
     }
     finished.store(true, Ordering::Release);
 }
@@ -722,6 +813,7 @@ mod tests {
             frame_len: 4,
             width: 1,
             height: 1,
+            fps: 60,
             children: children.clone(),
             latest: latest.clone(),
             error: error.clone(),
@@ -729,14 +821,14 @@ mod tests {
             paused: paused.clone(),
             stderr: Arc::new(Mutex::new(Vec::new())),
         };
-        let worker = thread::spawn(move || decode(stdout, context));
+        let workers = start_decoder(stdout, context).unwrap();
         MediaPlayer {
             children,
             latest,
             error,
             finished,
             paused,
-            worker: Some(worker),
+            workers,
             stderr_readers: Vec::new(),
             audio_monitor: None,
             cancel_audio_monitor: Arc::new(AtomicBool::new(false)),
@@ -780,6 +872,30 @@ mod tests {
             looped: false,
             muted: false,
         }
+    }
+
+    #[test]
+    fn fit_size_keeps_aspect_and_never_upscales() {
+        assert_eq!(fit_size((1280, 720), (1920, 1080)), (1280, 720));
+        assert_eq!(fit_size((3840, 2160), (1920, 1080)), (1920, 1080));
+        assert_eq!(fit_size((96, 54), (64, 64)), (64, 36));
+        assert_eq!(fit_size((1080, 1920), (1920, 1080)), (608, 1080));
+    }
+
+    #[test]
+    fn pacer_clock_does_not_burst_after_a_stall() {
+        let t0 = Instant::now();
+        let fps = 30;
+        // On time (and up to 250 ms late): the clock is untouched.
+        assert_eq!(paced_start(t0, 10, fps, frame_due(t0, 10, fps)), t0);
+        let late = frame_due(t0, 10, fps) + Duration::from_millis(250);
+        assert_eq!(paced_start(t0, 10, fps, late), t0);
+        // A 2 s stall rebases so frame 10 is due now and frame 11 one period later.
+        let now = t0 + Duration::from_secs(2);
+        let start = paced_start(t0, 10, fps, now);
+        let skew = |a: Instant, b: Instant| a.max(b) - a.min(b);
+        assert!(skew(frame_due(start, 10, fps), now) < Duration::from_millis(1));
+        assert!(frame_due(start, 11, fps) > now + Duration::from_millis(30));
     }
 
     #[test]
@@ -911,7 +1027,7 @@ mod tests {
         let stdout = child.stdout.take().unwrap();
         let mut player = fake_player(child, stdout);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-        while player.latest_frame().is_none() {
+        while player.take_frame().is_none() {
             assert!(
                 std::time::Instant::now() < deadline,
                 "first fake frame timed out"
