@@ -7,8 +7,8 @@ use std::{
 use crate::thumbnails::PreviewState;
 use egui::{Color32, Pos2, Rect, Stroke, TextureHandle, Vec2};
 use lumen_core::{
-    Backdrop, Background, LiveSlide, OutputState, Project, PushDirection, Runtime, SlideObject,
-    TextAlign, TextStyle, Transition, VerticalAlign, markup::Span,
+    Backdrop, Background, LiveSlide, MediaFit, OutputState, Project, PushDirection, Runtime,
+    SlideObject, TextAlign, TextStyle, Transition, VerticalAlign, markup::Span,
 };
 
 #[derive(Clone)]
@@ -208,12 +208,35 @@ fn paint_background(ui: &egui::Ui, canvas: Rect, scene: &Scene<'_>, clip_rect: R
         )
         && let Some(texture) = pdf.as_ref().or(scene.media)
     {
-        painter.image(
-            texture.id(),
-            fitted(canvas, texture.size_vec2()),
-            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-            crate::style::WHITE,
-        );
+        // PDF and deck pages always fit; only photos and videos have a scale choice.
+        let fit = scene
+            .background
+            .and_then(Background::fit)
+            .unwrap_or_default();
+        let (rect, uv) = media_rect_uv(texture.size_vec2(), canvas, fit);
+        painter.image(texture.id(), rect, uv, crate::style::WHITE);
+    }
+}
+
+/// Where a picture of `texture` size goes on `canvas`, and which part of it (UV) is shown.
+pub fn media_rect_uv(texture: Vec2, canvas: Rect, fit: MediaFit) -> (Rect, Rect) {
+    let all = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+    if texture.x <= 0.0 || texture.y <= 0.0 {
+        return (Rect::from_center_size(canvas.center(), Vec2::ZERO), all);
+    }
+    match fit {
+        MediaFit::Fit => (fitted(canvas, texture), all),
+        MediaFit::Stretch => (canvas, all),
+        MediaFit::Fill => {
+            // Scale to cover, then show the centred part of the picture that fits the canvas.
+            let scale = (canvas.width() / texture.x).max(canvas.height() / texture.y);
+            let shown = Vec2::new(
+                canvas.width() / (texture.x * scale),
+                canvas.height() / (texture.y * scale),
+            );
+            let uv = Rect::from_center_size(Pos2::new(0.5, 0.5), shown);
+            (canvas, uv)
+        }
     }
 }
 
@@ -703,6 +726,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn media_fit_places_a_4_3_picture_on_a_16_9_canvas() {
+        let canvas = Rect::from_min_size(Pos2::new(10.0, 20.0), Vec2::new(1600.0, 900.0));
+        let tex = Vec2::new(1440.0, 1080.0);
+        let (rect, uv) = media_rect_uv(tex, canvas, MediaFit::Fit);
+        assert_eq!(rect.size(), Vec2::new(1200.0, 900.0));
+        assert_eq!(rect.center(), canvas.center());
+        assert_eq!(uv, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)));
+        let (rect, uv) = media_rect_uv(tex, canvas, MediaFit::Stretch);
+        assert_eq!(rect, canvas);
+        assert_eq!(uv, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)));
+        // Fill covers the canvas and keeps the middle 75% of the height.
+        let (rect, uv) = media_rect_uv(tex, canvas, MediaFit::Fill);
+        assert_eq!(rect, canvas);
+        assert!((uv.width() - 1.0).abs() < 1e-6);
+        assert!((uv.height() - 0.75).abs() < 1e-6);
+        assert!((uv.center().y - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn media_fill_crops_a_portrait_picture_to_a_band() {
+        let canvas = Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0));
+        let (rect, uv) = media_rect_uv(Vec2::new(1080.0, 1920.0), canvas, MediaFit::Fill);
+        assert_eq!(rect, canvas);
+        assert!((uv.width() - 1.0).abs() < 1e-6);
+        // 1920×1080 of a 1080×1920 picture scaled to 1920 wide shows 1080 of 3413 rows.
+        assert!((uv.height() - 1080.0 / (1920.0 * 1920.0 / 1080.0)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn media_fit_draws_nothing_for_an_empty_texture() {
+        let canvas = Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0));
+        for fit in [MediaFit::Fit, MediaFit::Fill, MediaFit::Stretch] {
+            let (rect, _) = media_rect_uv(Vec2::ZERO, canvas, fit);
+            assert_eq!(rect.size(), Vec2::ZERO);
+            assert!(rect.center().x.is_finite() && rect.center().y.is_finite());
+        }
+    }
+
+    #[test]
     fn bottom_gradient_covers_width_and_scales_with_canvas() {
         for scale in [1.0, 0.25] {
             let canvas =
@@ -740,6 +802,7 @@ mod tests {
             path: "service.mp4".into(),
             looped: true,
             muted: true,
+            fit: lumen_core::MediaFit::default(),
         };
         doc.slides[1].background = Background::Solid([0, 0, 0, 0]);
         let mut runtime = Runtime::default();

@@ -392,11 +392,12 @@ impl LumenApp {
                 path,
                 looped,
                 muted,
+                ..
             }) => {
                 self.media.stop();
                 self.media.load_video(path, looped, muted)
             }
-            Some(Background::Image { path }) => {
+            Some(Background::Image { path, .. }) => {
                 self.media.stop();
                 self.media.load_image(path)
             }
@@ -841,9 +842,13 @@ impl LumenApp {
                                 path: path.clone(),
                                 looped: true,
                                 muted: true,
+                                fit: lumen_core::MediaFit::default(),
                             }
                         } else {
-                            Background::Image { path: path.clone() }
+                            Background::Image {
+                                path: path.clone(),
+                                fit: lumen_core::MediaFit::default(),
+                            }
                         };
                         self.mark();
                     }
@@ -2045,7 +2050,7 @@ impl LumenApp {
     }
     pub(super) fn thumbnail(&mut self, background: &Background) -> Option<TextureHandle> {
         let path = match background {
-            Background::Image { path } | Background::Video { path, .. } => path,
+            Background::Image { path, .. } | Background::Video { path, .. } => path,
             Background::Solid(_) | Background::Pdf { .. } => return None,
         };
         self.thumbnails.request(path);
@@ -2053,7 +2058,7 @@ impl LumenApp {
     }
     /// The big Preview's sharper still; `None` until it has loaded, so callers fall back to `thumbnail`.
     pub(super) fn thumbnail_large(&mut self, background: &Background) -> Option<TextureHandle> {
-        let (Background::Image { path } | Background::Video { path, .. }) = background else {
+        let (Background::Image { path, .. } | Background::Video { path, .. }) = background else {
             return None;
         };
         self.thumbnails.request_large(path);

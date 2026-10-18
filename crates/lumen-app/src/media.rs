@@ -1,5 +1,5 @@
 use egui::{ColorImage, TextureHandle, TextureOptions};
-use lumen_core::Background;
+use lumen_core::{Background, MediaFit};
 use lumen_media::{Frame, MediaPlayer, PlaybackOptions};
 use std::{
     path::PathBuf,
@@ -70,7 +70,10 @@ impl MediaState {
         let tx = self.tx.clone();
         let repaint_ctx = self.repaint_ctx.clone();
         self.pending = true;
-        self.requested_background = Some(Background::Image { path: path.clone() });
+        self.requested_background = Some(Background::Image {
+            path: path.clone(),
+            fit: MediaFit::default(),
+        });
         self.status = "Loading still image...".into();
         self.track_worker(thread::spawn(move || {
             let res = std::fs::metadata(&path)
@@ -114,6 +117,7 @@ impl MediaState {
             path: path.clone(),
             looped,
             muted,
+            fit: MediaFit::default(),
         });
         self.status = "Loading video...".into();
         self.track_worker(thread::spawn(move || {
@@ -135,8 +139,9 @@ impl MediaState {
             }
         }));
     }
+    /// A fit-only change repaints with the new fit but must not restart a playing video.
     pub fn matches_background(&self, background: Option<&Background>) -> bool {
-        self.requested_background.as_ref() == background
+        self.requested_background.as_ref().map(ignoring_fit) == background.map(ignoring_fit)
     }
     pub fn background_requires_reload(&self, background: Option<&Background>) -> bool {
         !self.matches_background(background)
@@ -255,6 +260,12 @@ impl MediaState {
     }
 }
 
+fn ignoring_fit(background: &Background) -> Background {
+    let mut background = background.clone();
+    background.set_fit(MediaFit::default());
+    background
+}
+
 impl Drop for MediaState {
     fn drop(&mut self) {
         self.shutdown();
@@ -264,7 +275,7 @@ impl Drop for MediaState {
 #[cfg(test)]
 mod tests {
     use super::MediaState;
-    use lumen_core::Background;
+    use lumen_core::{Background, MediaFit};
     use std::path::PathBuf;
     use std::{sync::mpsc, thread, time::Duration};
 
@@ -275,6 +286,7 @@ mod tests {
             path: PathBuf::from("shared.mp4"),
             looped: true,
             muted: false,
+            fit: MediaFit::Fit,
         };
         media.requested_background = Some(first.clone());
         assert!(media.matches_background(Some(&first)));
@@ -283,16 +295,38 @@ mod tests {
             path: PathBuf::from("shared.mp4"),
             looped: false,
             muted: false,
+            fit: MediaFit::Fit,
         })));
         assert!(!media.matches_background(Some(&Background::Video {
             path: PathBuf::from("shared.mp4"),
             looped: true,
             muted: true,
+            fit: MediaFit::Fit,
         })));
         assert!(media.background_requires_reload(Some(&Background::Video {
             path: PathBuf::from("shared.mp4"),
             looped: false,
             muted: false,
+            fit: MediaFit::Fit,
+        })));
+    }
+
+    #[test]
+    fn a_fit_change_does_not_reload_playing_media() {
+        let mut media = MediaState::default();
+        let video = |fit| Background::Video {
+            path: PathBuf::from("cue.mp4"),
+            looped: true,
+            muted: true,
+            fit,
+        };
+        media.remember_background(video(MediaFit::Fit));
+        assert!(!media.background_requires_reload(Some(&video(MediaFit::Fill))));
+        assert!(media.background_requires_reload(Some(&Background::Video {
+            path: PathBuf::from("other.mp4"),
+            looped: true,
+            muted: true,
+            fit: MediaFit::Fit,
         })));
     }
 
@@ -303,6 +337,7 @@ mod tests {
             path: PathBuf::from("cue.mp4"),
             looped: false,
             muted: true,
+            fit: MediaFit::Fit,
         };
         media.remember_background(video.clone());
         assert!(
@@ -328,6 +363,7 @@ mod tests {
             path: PathBuf::from("live.mp4"),
             looped: true,
             muted: false,
+            fit: MediaFit::Fit,
         });
         assert!(media.background_requires_reload(None));
     }

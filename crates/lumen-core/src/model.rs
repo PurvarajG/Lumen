@@ -213,6 +213,18 @@ pub struct Slide {
     pub audio: Option<AudioCue>,
 }
 
+/// How a photo or video whose shape is not 16:9 meets the screen.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MediaFit {
+    /// Whole picture, bars where the shape differs.
+    #[default]
+    Fit,
+    /// Fills the screen, cropping the overflow.
+    Fill,
+    /// Fills the screen, distorting the picture.
+    Stretch,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum Background {
     Solid([u8; 4]),
@@ -222,17 +234,40 @@ pub enum Background {
     },
     Image {
         path: PathBuf,
+        #[serde(default)]
+        fit: MediaFit,
     },
     Video {
         path: PathBuf,
         looped: bool,
         muted: bool,
+        #[serde(default)]
+        fit: MediaFit,
     },
 }
 
 impl Background {
     pub fn is_transparent(&self) -> bool {
         matches!(self, Self::Solid(color) if color[3] == 0)
+    }
+
+    /// The scale choice of a photo or video; other backgrounds have none.
+    pub fn fit(&self) -> Option<MediaFit> {
+        match self {
+            Self::Image { fit, .. } | Self::Video { fit, .. } => Some(*fit),
+            Self::Solid(_) | Self::Pdf { .. } => None,
+        }
+    }
+
+    /// Sets the scale of a photo or video; true when that changed something.
+    pub fn set_fit(&mut self, choice: MediaFit) -> bool {
+        match self {
+            Self::Image { fit, .. } | Self::Video { fit, .. } if *fit != choice => {
+                *fit = choice;
+                true
+            }
+            _ => false,
+        }
     }
 }
 

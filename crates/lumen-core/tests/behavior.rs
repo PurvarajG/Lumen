@@ -1,7 +1,7 @@
 use lumen_core::{
-    AudioCue, Background, CoreError, CueAction, Document, Macro, MessageTemplate, Project, Prop,
-    Rect, Runtime, Slide, SlideObject, TextAlign, TextStyle, Theme, TimerDef, TimerKind,
-    document_from_text, load_project, save_project,
+    AudioCue, Background, CoreError, CueAction, Document, Macro, MediaFit, MessageTemplate,
+    Project, Prop, Rect, Runtime, Slide, SlideObject, TextAlign, TextStyle, Theme, TimerDef,
+    TimerKind, document_from_text, load_project, save_project,
 };
 use std::{fs, time::Duration};
 use uuid::Uuid;
@@ -461,9 +461,50 @@ fn serde_background_uses_external_tags() {
         path: "movie.mov".into(),
         looped: true,
         muted: false,
+        fit: MediaFit::Fill,
     })
     .unwrap();
     assert!(value.get("Video").is_some());
+}
+
+#[test]
+fn media_fit_defaults_to_fit_for_old_files_and_round_trips() {
+    let old: Background = serde_json::from_str(r#"{"Image":{"path":"a.png"}}"#).unwrap();
+    assert_eq!(old.fit(), Some(MediaFit::Fit));
+    let old: Background =
+        serde_json::from_str(r#"{"Video":{"path":"a.mp4","looped":true,"muted":false}}"#).unwrap();
+    assert_eq!(old.fit(), Some(MediaFit::Fit));
+
+    let mut project = Project::demo();
+    let slide = &mut project.documents[0].slides[0];
+    slide.background = Background::Video {
+        path: "a.mp4".into(),
+        looped: true,
+        muted: true,
+        fit: MediaFit::Stretch,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fit.lumen.json");
+    lumen_core::save_project(&path, &project).unwrap();
+    let loaded = lumen_core::load_project(&path).unwrap();
+    assert_eq!(
+        loaded.documents[0].slides[0].background.fit(),
+        Some(MediaFit::Stretch)
+    );
+}
+
+#[test]
+fn set_fit_changes_only_photos_and_videos() {
+    let mut image = Background::Image {
+        path: "a.png".into(),
+        fit: MediaFit::Fit,
+    };
+    assert!(image.set_fit(MediaFit::Fill));
+    assert!(!image.set_fit(MediaFit::Fill));
+    assert_eq!(image.fit(), Some(MediaFit::Fill));
+    let mut solid = Background::Solid([0, 0, 0, 255]);
+    assert!(!solid.set_fit(MediaFit::Fill));
+    assert_eq!(solid.fit(), None);
 }
 
 #[test]

@@ -2,7 +2,7 @@ use crate::thumbnails::PreviewState;
 use crate::{app::LumenApp, render, style};
 use egui::{self, RichText, Vec2};
 use lumen_core::{
-    Background, CueAction, Document, Macro, PlaylistItem, Project, Slide, Transition,
+    Background, CueAction, Document, Macro, MediaFit, PlaylistItem, Project, Slide, Transition,
 };
 use uuid::Uuid;
 
@@ -401,7 +401,7 @@ fn document_rows(
                         }
                     }
                     r.clone().on_hover_text(label);
-                    deck_play_menu(app, r, *id);
+                    cue_menu(app, r, *id, None);
                     if app.selected_doc == *id && (!app.present || app.library_tab == 1) {
                         ui.horizontal(|ui| {
                             if app.library_tab == 1 {
@@ -460,7 +460,7 @@ fn thumbnail_placeholder(
     rect: egui::Rect,
     background: &Background,
 ) -> Option<String> {
-    let (Background::Image { path } | Background::Video { path, .. }) = background else {
+    let (Background::Image { path, .. } | Background::Video { path, .. }) = background else {
         return None;
     };
     let state = app.thumbnails.state(path)?;
@@ -729,7 +729,7 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
                             if r.double_clicked() {
                                 app.trigger(app.selected_doc, slide.id);
                             }
-                            deck_play_menu(app, r.clone(), app.selected_doc);
+                            cue_menu(app, r.clone(), app.selected_doc, Some(slide.id));
                             ui.horizontal(|ui| {
                                 ui.add(egui::Label::new(&slide.label).truncate());
                                 if live {
@@ -776,33 +776,98 @@ fn preview_texture<T>(on_air: bool, live: Option<T>, still: Option<T>) -> Option
     if on_air { live.or(still) } else { still }
 }
 
-fn deck_play_menu(app: &mut LumenApp, response: egui::Response, document_id: Uuid) {
-    let Some(source) = app
+/// Right-click menu of a cue tile (`slide` set) or a running-order row (`slide` None): Play in
+/// PowerPoint/Keynote for a deck, Scale for photos and videos.
+fn cue_menu(app: &mut LumenApp, response: egui::Response, document_id: Uuid, slide: Option<Uuid>) {
+    let source = app
         .project
         .document(document_id)
-        .and_then(|document| document.source.clone())
+        .and_then(|document| document.source.clone());
+    // A row speaks for every photo or video in its document; its check shows the first one's.
+    let fits: Vec<MediaFit> = app
+        .project
+        .document(document_id)
+        .into_iter()
+        .flat_map(|document| &document.slides)
+        .filter(|s| slide.is_none_or(|id| s.id == id))
+        .filter_map(|s| s.background.fit())
+        .collect();
+    if source.is_none() && fits.is_empty() {
+        return;
+    }
+    let live =
+        app.runtime.output.live.as_ref().is_some_and(|l| {
+            l.document_id == document_id && slide.is_none_or(|id| l.slide.id == id)
+        });
+    response.context_menu(|ui| {
+        if let Some(source) = &source {
+            let app_name = match source
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "key" => "Keynote",
+                _ => "PowerPoint",
+            };
+            if ui.button(format!("Play in {app_name} instead")).clicked() {
+                app.apply_actions(&[CueAction::PlayDeck {
+                    path: source.clone(),
+                }]);
+                ui.close();
+            }
+            ui.label("Keeps animations; overlays hidden");
+        }
+        if let Some(current) = fits.first() {
+            // Not a submenu: the arrow glyph is missing from the bundled fonts.
+            if source.is_some() {
+                ui.separator();
+            }
+            ui.label(
+                RichText::new("Scale")
+                    .size(style::CAPTION)
+                    .color(style::TEXT_DIM),
+            );
+            for choice in [MediaFit::Fit, MediaFit::Fill, MediaFit::Stretch] {
+                let label = crate::inspector::fit_label(choice);
+                if ui.selectable_label(*current == choice, label).clicked() {
+                    set_fit(app, document_id, slide, choice);
+                    ui.close();
+                }
+            }
+            if live {
+                ui.label(
+                    RichText::new("Applies the next time it goes live.")
+                        .size(style::CAPTION)
+                        .color(style::TEXT_DIM),
+                );
+            }
+        }
+    });
+}
+
+/// Applies a scale to one slide or to every photo and video of a document; one undo step.
+fn set_fit(app: &mut LumenApp, document_id: Uuid, slide: Option<Uuid>, fit: MediaFit) {
+    let Some(document) = app
+        .project
+        .documents
+        .iter_mut()
+        .find(|d| d.id == document_id)
     else {
         return;
     };
-    let app_name = match source
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase()
-        .as_str()
+    let mut changed = false;
+    for s in document
+        .slides
+        .iter_mut()
+        .filter(|s| slide.is_none_or(|id| s.id == id))
     {
-        "key" => "Keynote",
-        _ => "PowerPoint",
-    };
-    response.context_menu(|ui| {
-        if ui.button(format!("Play in {app_name} instead")).clicked() {
-            app.apply_actions(&[CueAction::PlayDeck {
-                path: source.clone(),
-            }]);
-            ui.close();
-        }
-        ui.label("Keeps animations; overlays hidden");
-    });
+        changed |= s.background.set_fit(fit);
+    }
+    if changed {
+        app.mark();
+    }
 }
 
 pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {

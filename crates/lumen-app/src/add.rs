@@ -1,6 +1,8 @@
 //! Build a show from files: pure planning, folder expansion, document building,
 //! running-order insert/move/remove, and drag-slot maths. Disk work runs on the file worker.
-use lumen_core::{AudioCue, Background, CueAction, Document, PlaylistItem, Project, Slide};
+use lumen_core::{
+    AudioCue, Background, CueAction, Document, MediaFit, PlaylistItem, Project, Slide,
+};
 use lumen_interchange::ImportReport;
 use std::{
     cmp::Ordering,
@@ -168,6 +170,7 @@ fn build_with_progress(
             stem.clone(),
             Background::Image {
                 path: path.to_owned(),
+                fit: MediaFit::default(),
             },
             None,
         ),
@@ -177,6 +180,7 @@ fn build_with_progress(
                 path: path.to_owned(),
                 looped: false,
                 muted: false,
+                fit: MediaFit::default(),
             },
             None,
         ),
@@ -451,7 +455,8 @@ mod tests {
         assert_eq!(
             slide.background,
             Background::Image {
-                path: p("/m/Welcome.png")
+                path: p("/m/Welcome.png"),
+                fit: MediaFit::Fit
             }
         );
         let video =
@@ -461,7 +466,8 @@ mod tests {
             Background::Video {
                 path: p("/m/Intro.mp4"),
                 looped: false,
-                muted: false
+                muted: false,
+                fit: MediaFit::Fit
             }
         );
         let audio =

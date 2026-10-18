@@ -11,6 +11,7 @@ fn caption_project() -> Project {
         path: "service.mp4".into(),
         looped: true,
         muted: true,
+        fit: Default::default(),
     };
     document.slides = vec![video.clone()];
     for _ in 0..3 {

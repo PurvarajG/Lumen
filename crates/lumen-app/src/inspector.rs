@@ -1,5 +1,6 @@
 use lumen_core::{
-    Background, CueAction, Project, Rect, Slide, SlideObject, TextAlign, TextStyle, Transition,
+    Background, CueAction, MediaFit, Project, Rect, Slide, SlideObject, TextAlign, TextStyle,
+    Transition,
 };
 use uuid::Uuid;
 
@@ -115,18 +116,20 @@ pub fn slide(ui: &mut egui::Ui, slide: &mut Slide, project: &mut Project) -> boo
         Background::Pdf { path, page } => {
             ui.label(format!("PDF: {} — Page {}", path.display(), page));
         }
-        Background::Image { path } => {
+        Background::Image { path, fit } => {
             ui.label("Image path");
             let mut s = path.to_string_lossy().into_owned();
             if ui.text_edit_singleline(&mut s).changed() {
                 *path = s.into();
                 changed = true;
             }
+            changed |= scale_combo(ui, fit);
         }
         Background::Video {
             path,
             looped,
             muted,
+            fit,
         } => {
             ui.label("Video path");
             let mut s = path.to_string_lossy().into_owned();
@@ -136,6 +139,7 @@ pub fn slide(ui: &mut egui::Ui, slide: &mut Slide, project: &mut Project) -> boo
             }
             changed |= ui.checkbox(looped, "Loop").changed();
             changed |= ui.checkbox(muted, "Muted").changed();
+            changed |= scale_combo(ui, fit);
         }
     });
     ui.collapsing("Transition", |ui| {
@@ -591,6 +595,30 @@ fn rgba(c: [u8; 4]) -> egui::Color32 {
 fn bytes(c: egui::Color32) -> [u8; 4] {
     [c.r(), c.g(), c.b(), c.a()]
 }
+pub fn fit_label(fit: MediaFit) -> &'static str {
+    match fit {
+        MediaFit::Fit => "Fit (show bars)",
+        MediaFit::Fill => "Fill screen (crop)",
+        MediaFit::Stretch => "Stretch",
+    }
+}
+
+/// How a photo or video that is not 16:9 meets the screen; true when it changed.
+fn scale_combo(ui: &mut egui::Ui, fit: &mut MediaFit) -> bool {
+    let before = *fit;
+    ui.horizontal(|ui| {
+        ui.label("Scale");
+        egui::ComboBox::from_id_salt("media-fit")
+            .selected_text(fit_label(*fit))
+            .show_ui(ui, |ui| {
+                for choice in [MediaFit::Fit, MediaFit::Fill, MediaFit::Stretch] {
+                    ui.selectable_value(fit, choice, fit_label(choice));
+                }
+            });
+    });
+    *fit != before
+}
+
 #[cfg(test)]
 mod tests {
     use super::{percent_to_unit, unit_to_percent};
