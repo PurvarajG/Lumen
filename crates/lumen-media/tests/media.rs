@@ -71,6 +71,13 @@ fn rejects_invalid_inputs_and_options() {
     ));
 }
 
+/// What a display refreshing at 60 Hz would pull right now.
+fn next_frame(player: &MediaPlayer) -> Option<lumen_media::Frame> {
+    player
+        .frames()
+        .frame_at(Instant::now(), Duration::from_millis(16))
+}
+
 #[test]
 fn probes_and_decodes_generated_media_at_fitted_size() {
     if !tools_available() {
@@ -87,7 +94,7 @@ fn probes_and_decodes_generated_media_at_fitted_size() {
     let player = MediaPlayer::open(&path, options(false)).unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
     let frame = loop {
-        if let Some(frame) = player.take_frame() {
+        if let Some(frame) = next_frame(&player) {
             break frame;
         }
         assert!(
@@ -103,9 +110,7 @@ fn probes_and_decodes_generated_media_at_fitted_size() {
     assert_eq!(frame.rgba.len(), 64 * 36 * 4);
     assert!(frame.sequence > 0);
     assert!(
-        player
-            .take_frame()
-            .is_none_or(|next| next.sequence > frame.sequence),
+        next_frame(&player).is_none_or(|next| next.sequence > frame.sequence),
         "a taken frame must not be handed out twice"
     );
 }
@@ -120,16 +125,18 @@ fn non_looping_playback_finishes_and_stop_is_idempotent() {
     let path = make_video(dir.path(), "short.mp4", 0.6, false);
     let mut player = MediaPlayer::open(&path, options(false)).unwrap();
     let deadline = Instant::now() + Duration::from_secs(4);
+    let mut shown = 0;
     while !player.is_finished() {
         assert!(Instant::now() < deadline, "playback did not finish");
-        thread::sleep(Duration::from_millis(20));
+        shown += usize::from(next_frame(&player).is_some());
+        thread::sleep(Duration::from_millis(5));
     }
     assert!(
         player.error().is_none(),
         "playback error: {:?}",
         player.error()
     );
-    assert!(player.take_frame().is_some());
+    assert!(shown >= 5, "only {shown} frames of a 0.6 s clip");
     player.stop();
     player.stop();
 }
@@ -144,23 +151,23 @@ fn pause_and_drop_clean_up_owned_children() {
     let path = make_video(dir.path(), "long.mp4", 8.0, false);
     let mut player = MediaPlayer::open(&path, options(true)).unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
-    while player.take_frame().is_none() {
+    while next_frame(&player).is_none() {
         assert!(Instant::now() < deadline, "first frame timed out");
         thread::sleep(Duration::from_millis(10));
     }
     player.set_paused(true).unwrap();
     assert!(player.is_paused());
     thread::sleep(Duration::from_millis(100)); // let an in-flight frame land
-    let _ = player.take_frame();
+    let _ = next_frame(&player);
     let frozen = player.position_secs();
     thread::sleep(Duration::from_millis(180));
-    assert!(player.take_frame().is_none(), "frames arrived while paused");
+    assert!(next_frame(&player).is_none(), "frames arrived while paused");
     assert_eq!(player.position_secs(), frozen, "clock moved while paused");
     assert!(player.duration_secs().is_some_and(|d| d > 7.0));
     player.set_paused(false).unwrap();
     assert!(!player.is_paused());
     let deadline = Instant::now() + Duration::from_secs(2);
-    while player.take_frame().is_none() {
+    while next_frame(&player).is_none() {
         assert!(Instant::now() < deadline, "decoder did not resume");
         thread::sleep(Duration::from_millis(10));
     }

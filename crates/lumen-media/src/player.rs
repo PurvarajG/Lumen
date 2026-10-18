@@ -1,11 +1,12 @@
 use crate::{MediaError, probe::bounded_text, probe::probe_with_program, validate_file};
 use std::{
+    collections::VecDeque,
     io::Read,
     path::Path,
     process::{Child, Command, Stdio},
     sync::{
         Arc, Mutex, MutexGuard,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
         mpsc,
     },
     thread::{self, JoinHandle},
@@ -14,8 +15,10 @@ use std::{
 
 /// A frame this late means the clock stalled (pause, loop restart, slow decode).
 const REBASE_AFTER: Duration = Duration::from_millis(250);
-/// Frames the reader may decode ahead of the pacer.
+/// Frames the reader may decode ahead of the consumer.
 const READ_AHEAD: usize = 3;
+/// Decoded frames a consumer peeks at, so it can skip a frame that is already late.
+const LOOKAHEAD: usize = 2;
 
 #[derive(Clone, Debug)]
 pub struct Frame {
@@ -54,14 +57,134 @@ struct Children {
     audio: Option<Child>,
 }
 
+/// Hands out decoded frames on the clock of whoever displays them.
+#[derive(Clone)]
+pub struct FrameSource {
+    clock: Arc<Mutex<FrameClock>>,
+    paused: Arc<AtomicBool>,
+}
+
+struct FrameClock {
+    rx: Option<mpsc::Receiver<Vec<u8>>>,
+    width: u32,
+    height: u32,
+    fps: u32,
+    /// Frame `n` is due at `start + n / fps`; `None` until a frame is waiting, and after a pause.
+    start: Option<Instant>,
+    /// Frames taken from the reader; the next one gets this index.
+    pulled: u64,
+    ahead: VecDeque<(u64, Vec<u8>)>,
+    /// One past the index of the last frame handed out.
+    shown: u64,
+    has_frame: bool,
+    /// The reader is gone and the channel is empty.
+    ended: bool,
+}
+
+impl FrameClock {
+    fn new(rx: mpsc::Receiver<Vec<u8>>, width: u32, height: u32, fps: u32) -> Self {
+        Self {
+            rx: Some(rx),
+            width,
+            height,
+            fps,
+            start: None,
+            pulled: 0,
+            ahead: VecDeque::new(),
+            shown: 0,
+            has_frame: false,
+            ended: false,
+        }
+    }
+
+    fn due(&self, start: Instant, n: u64) -> Instant {
+        start + Duration::from_secs_f64(n as f64 / f64::from(self.fps))
+    }
+
+    fn fill(&mut self) {
+        while self.ahead.len() < LOOKAHEAD && !self.ended {
+            let Some(rx) = &self.rx else {
+                self.ended = true;
+                break;
+            };
+            match rx.try_recv() {
+                Ok(rgba) => {
+                    self.ahead.push_back((self.pulled, rgba));
+                    self.pulled += 1;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => self.ended = true,
+            }
+        }
+    }
+
+    fn finished(&mut self) -> bool {
+        self.fill();
+        self.ended && self.ahead.is_empty()
+    }
+
+    /// The newest frame that is due at `now`, once. Older due frames are skipped.
+    fn frame_at(&mut self, now: Instant, refresh: Duration, paused: bool) -> Option<Frame> {
+        if paused {
+            self.start = None; // resume re-anchors the clock
+            return None;
+        }
+        self.fill();
+        let head = self.ahead.front()?.0;
+        let start = match self.start {
+            Some(start) if now <= self.due(start, head) + REBASE_AFTER => start,
+            // First frame, resume, or a stall: frame `head` becomes due a quarter refresh ago. The
+            // offset keeps every frame's due time at least 1/4 refresh from a vsync, so timing
+            // noise can't flip which refresh shows it.
+            // shortcut: rebase the clock when >250 ms late (pause, stall); upgrade to PTS-driven timing if A/V drift is reported.
+            _ => {
+                let back = refresh / 4 + Duration::from_secs_f64(head as f64 / f64::from(self.fps));
+                now.checked_sub(back).unwrap_or(now)
+            }
+        };
+        self.start = Some(start);
+        while self.ahead.len() > 1 && self.due(start, self.ahead[1].0) <= now {
+            self.ahead.pop_front();
+        }
+        if self.due(start, self.ahead.front()?.0) > now {
+            return None;
+        }
+        let (n, rgba) = self.ahead.pop_front()?;
+        self.shown = n + 1;
+        self.has_frame = true;
+        Some(Frame {
+            width: self.width,
+            height: self.height,
+            rgba,
+            sequence: n + 1,
+        })
+    }
+
+    fn close(&mut self) {
+        self.rx = None; // unblocks a reader waiting to send
+        self.ahead.clear();
+        self.ended = true;
+    }
+}
+
+impl FrameSource {
+    /// The frame to show for the display refresh at `now`, or `None` when the picture is unchanged.
+    pub fn frame_at(&self, now: Instant, refresh: Duration) -> Option<Frame> {
+        let paused = self.paused.load(Ordering::Acquire);
+        lock(&self.clock).frame_at(now, refresh, paused)
+    }
+    /// True once any frame has been handed out.
+    pub fn has_frame(&self) -> bool {
+        lock(&self.clock).has_frame
+    }
+}
+
 pub struct MediaPlayer {
     children: Arc<Mutex<Children>>,
-    latest: Arc<Mutex<Option<Frame>>>,
+    source: FrameSource,
     error: Arc<Mutex<Option<String>>>,
     finished: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
-    /// Frames shown so far; the pacer's own counter resets on pause, this one does not.
-    frames: Arc<AtomicU64>,
     fps: u32,
     duration_secs: Option<f64>,
     looped: bool,
@@ -171,11 +294,9 @@ impl MediaPlayer {
             video: Some(video_child),
             audio: audio_child.take(),
         }));
-        let latest = Arc::new(Mutex::new(None));
         let error = Arc::new(Mutex::new(None));
         let finished = Arc::new(AtomicBool::new(false));
         let paused = Arc::new(AtomicBool::new(false));
-        let frames = Arc::new(AtomicU64::new(0));
         let cancel_audio_monitor = Arc::new(AtomicBool::new(false));
         let audio_monitor = if lock(&children).audio.is_some() {
             let children = children.clone();
@@ -245,17 +366,15 @@ impl MediaPlayer {
                 height,
                 fps,
                 children: children.clone(),
-                latest: latest.clone(),
                 error: error.clone(),
                 finished: finished.clone(),
                 paused: paused.clone(),
-                frames: frames.clone(),
                 stderr: video_stderr,
             };
             start_decoder(stdout, context)
         };
-        let workers = match worker_result {
-            Ok(workers) => workers,
+        let (workers, source) = match worker_result {
+            Ok(started) => started,
             Err(e) => {
                 cancel_audio_monitor.store(true, Ordering::Release);
                 terminate_children(&children);
@@ -272,11 +391,10 @@ impl MediaPlayer {
         };
         Ok(Self {
             children,
-            latest,
+            source,
             error,
             finished,
             paused,
-            frames,
             fps,
             duration_secs: info.duration_secs,
             looped: options.looped,
@@ -289,15 +407,16 @@ impl MediaPlayer {
         })
     }
 
-    /// Takes the newest frame, if one has arrived since the last call.
-    pub fn take_frame(&self) -> Option<Frame> {
-        lock(&self.latest).take()
+    /// Handle the display uses to pull frames on its own refresh.
+    pub fn frames(&self) -> FrameSource {
+        self.source.clone()
     }
     pub fn error(&self) -> Option<String> {
         lock(&self.error).clone()
     }
+    /// Stopped, or every frame has been shown.
     pub fn is_finished(&self) -> bool {
-        self.finished.load(Ordering::Acquire)
+        self.finished.load(Ordering::Acquire) || lock(&self.source.clock).finished()
     }
     pub fn is_paused(&self) -> bool {
         self.paused.load(Ordering::Acquire)
@@ -309,7 +428,7 @@ impl MediaPlayer {
     /// Playback position: frames shown over the frame rate, wrapped for a looped clip.
     pub fn position_secs(&self) -> f64 {
         position_in(
-            self.frames.load(Ordering::Acquire),
+            lock(&self.source.clock).shown,
             self.fps,
             self.duration_secs,
             self.looped,
@@ -355,6 +474,7 @@ impl MediaPlayer {
         self.paused.store(false, Ordering::Release);
         self.cancel_audio_monitor.store(true, Ordering::Release);
         terminate_children(&self.children);
+        lock(&self.source.clock).close();
         for worker in self.workers.drain(..) {
             let _ = worker.join();
         }
@@ -465,35 +585,31 @@ struct DecoderContext {
     height: u32,
     fps: u32,
     children: Arc<Mutex<Children>>,
-    latest: Arc<Mutex<Option<Frame>>>,
     error: Arc<Mutex<Option<String>>>,
     finished: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
-    frames: Arc<AtomicU64>,
     stderr: Arc<Mutex<Vec<u8>>>,
 }
 
-/// Starts the reader (ffmpeg pipe to frames) and the pacer (frames to `latest` on a steady clock).
+/// Starts the reader (ffmpeg pipe to a bounded channel); the display pulls frames from the source.
 fn start_decoder(
     stdout: impl Read + Send + 'static,
     context: DecoderContext,
-) -> std::io::Result<Vec<JoinHandle<()>>> {
+) -> std::io::Result<(Vec<JoinHandle<()>>, FrameSource)> {
     let (tx, rx) = mpsc::sync_channel(READ_AHEAD);
-    let pacer_context = context.clone();
-    let pacer = thread::Builder::new()
-        .name("lumen-media-pacer".into())
-        .spawn(move || pace(rx, pacer_context))?;
-    // If this spawn fails the closure and `tx` drop, which ends the pacer.
-    match thread::Builder::new()
+    let source = FrameSource {
+        clock: Arc::new(Mutex::new(FrameClock::new(
+            rx,
+            context.width,
+            context.height,
+            context.fps,
+        ))),
+        paused: context.paused.clone(),
+    };
+    let reader = thread::Builder::new()
         .name("lumen-media-video".into())
-        .spawn(move || read_frames(stdout, tx, context))
-    {
-        Ok(reader) => Ok(vec![reader, pacer]),
-        Err(e) => {
-            let _ = pacer.join();
-            Err(e)
-        }
-    }
+        .spawn(move || read_frames(stdout, tx, context))?;
+    Ok((vec![reader], source))
 }
 
 fn read_frames(mut stdout: impl Read, tx: mpsc::SyncSender<Vec<u8>>, context: DecoderContext) {
@@ -540,7 +656,7 @@ fn read_frames(mut stdout: impl Read, tx: mpsc::SyncSender<Vec<u8>>, context: De
             break;
         }
         if tx.send(bytes).is_err() {
-            break; // pacer is gone (stop)
+            break; // the clock is closed (stop)
         }
     }
     let status = wait_video_exit(&children, &finished);
@@ -564,67 +680,7 @@ fn read_frames(mut stdout: impl Read, tx: mpsc::SyncSender<Vec<u8>>, context: De
             let _ = signal_child(child, false);
         }
     }
-    // Dropping `tx` lets the pacer show the queued frames, then mark playback finished.
-}
-
-fn frame_due(start: Instant, n: u64, fps: u32) -> Instant {
-    start + Duration::from_secs_f64(n as f64 / f64::from(fps))
-}
-
-/// The clock start to use for frame `n` at `now`.
-// shortcut: rebase the clock when >250 ms late (pause, stall); upgrade to PTS-driven timing if A/V drift is reported.
-fn paced_start(start: Instant, n: u64, fps: u32, now: Instant) -> Instant {
-    if now > frame_due(start, n, fps) + REBASE_AFTER {
-        let elapsed = Duration::from_secs_f64(n as f64 / f64::from(fps));
-        now.checked_sub(elapsed).unwrap_or(now)
-    } else {
-        start
-    }
-}
-
-fn pace(rx: mpsc::Receiver<Vec<u8>>, context: DecoderContext) {
-    let DecoderContext {
-        width,
-        height,
-        fps,
-        latest,
-        finished,
-        paused,
-        frames,
-        ..
-    } = context;
-    let mut sequence = 0u64;
-    let mut clock: Option<(Instant, u64)> = None; // (start, frames shown since start)
-    'frames: while let Ok(rgba) = rx.recv() {
-        loop {
-            if finished.load(Ordering::Acquire) {
-                break 'frames;
-            }
-            if paused.load(Ordering::Acquire) {
-                clock = None; // resume re-anchors the clock on the next frame
-                thread::sleep(Duration::from_millis(10));
-                continue;
-            }
-            let now = Instant::now();
-            let (start, n) = clock.get_or_insert((now, 0));
-            *start = paced_start(*start, *n, fps, now);
-            let due = frame_due(*start, *n, fps);
-            if now >= due {
-                *n += 1;
-                break;
-            }
-            thread::sleep((due - now).min(Duration::from_millis(20)));
-        }
-        sequence = sequence.wrapping_add(1);
-        frames.fetch_add(1, Ordering::Release);
-        *lock(&latest) = Some(Frame {
-            width,
-            height,
-            rgba,
-            sequence,
-        });
-    }
-    finished.store(true, Ordering::Release);
+    // Dropping `tx` lets the clock hand out the queued frames, then report playback finished.
 }
 
 /// Reap a naturally exited decoder without holding lifecycle ownership across a wait.
@@ -847,32 +903,27 @@ mod tests {
             video: Some(child),
             audio: None,
         }));
-        let latest = Arc::new(Mutex::new(None));
         let error = Arc::new(Mutex::new(None));
         let finished = Arc::new(AtomicBool::new(false));
         let paused = Arc::new(AtomicBool::new(false));
-        let frames = Arc::new(AtomicU64::new(0));
         let context = DecoderContext {
             frame_len: 4,
             width: 1,
             height: 1,
             fps: 60,
             children: children.clone(),
-            latest: latest.clone(),
             error: error.clone(),
             finished: finished.clone(),
             paused: paused.clone(),
-            frames: frames.clone(),
             stderr: Arc::new(Mutex::new(Vec::new())),
         };
-        let workers = start_decoder(stdout, context).unwrap();
+        let (workers, source) = start_decoder(stdout, context).unwrap();
         MediaPlayer {
             children,
-            latest,
+            source,
             error,
             finished,
             paused,
-            frames,
             fps: 60,
             duration_secs: None,
             looped: false,
@@ -940,20 +991,90 @@ mod tests {
         assert_eq!(position_in(60, 30, Some(0.0), true), 2.0);
     }
 
-    #[test]
-    fn pacer_clock_does_not_burst_after_a_stall() {
+    /// A clock with `count` queued 1×1 frames, driven by hand.
+    fn clock(fps: u32, count: usize) -> FrameClock {
+        let (tx, rx) = mpsc::channel();
+        for _ in 0..count {
+            tx.send(vec![0; 4]).unwrap();
+        }
+        FrameClock::new(rx, 1, 1, fps)
+    }
+
+    /// Refreshes each frame stays up, with the display's vsync times jittered by up to ±1 ms.
+    fn frame_lengths(fps: u32, hz: u32) -> Vec<u64> {
+        let refresh = Duration::from_secs_f64(1.0 / f64::from(hz));
+        let mut clock = clock(fps, 400);
         let t0 = Instant::now();
-        let fps = 30;
-        // On time (and up to 250 ms late): the clock is untouched.
-        assert_eq!(paced_start(t0, 10, fps, frame_due(t0, 10, fps)), t0);
-        let late = frame_due(t0, 10, fps) + Duration::from_millis(250);
-        assert_eq!(paced_start(t0, 10, fps, late), t0);
-        // A 2 s stall rebases so frame 10 is due now and frame 11 one period later.
-        let now = t0 + Duration::from_secs(2);
-        let start = paced_start(t0, 10, fps, now);
-        let skew = |a: Instant, b: Instant| a.max(b) - a.min(b);
-        assert!(skew(frame_due(start, 10, fps), now) < Duration::from_millis(1));
-        assert!(frame_due(start, 11, fps) > now + Duration::from_millis(30));
+        let mut noise = 12345u32;
+        let mut shown_at = Vec::new();
+        for k in 0..(u64::from(hz) * 8) {
+            noise = noise.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let jitter = Duration::from_micros(u64::from(noise >> 16) % 2000);
+            let vsync = t0 + refresh * k as u32 + jitter; // 0..2 ms late, i.e. ±1 ms around the mean
+            if clock.frame_at(vsync, refresh, false).is_some() {
+                shown_at.push(k);
+            }
+        }
+        shown_at.windows(2).map(|w| w[1] - w[0]).collect()
+    }
+
+    #[test]
+    fn frames_stay_up_a_whole_even_number_of_refreshes() {
+        let all = |lengths: Vec<u64>, allowed: &[u64]| {
+            assert!(lengths.len() > 100);
+            assert!(lengths.iter().all(|l| allowed.contains(l)), "{lengths:?}");
+        };
+        all(frame_lengths(30, 75), &[2, 3]);
+        all(frame_lengths(25, 75), &[3]);
+        all(frame_lengths(30, 120), &[4]);
+        all(frame_lengths(30, 60), &[2]);
+    }
+
+    #[test]
+    fn a_stall_gives_one_frame_not_a_burst() {
+        let refresh = Duration::from_millis(13);
+        let mut clock = clock(30, 100);
+        let t0 = Instant::now();
+        assert!(clock.frame_at(t0, refresh, false).is_some());
+        let later = t0 + Duration::from_secs(2);
+        let first = clock
+            .frame_at(later, refresh, false)
+            .expect("resumes at once");
+        assert_eq!(first.sequence, 2);
+        assert!(clock.frame_at(later + refresh, refresh, false).is_none());
+        assert!(
+            clock
+                .frame_at(later + refresh * 3, refresh, false)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn pause_holds_the_picture_and_resume_does_not_burst() {
+        let refresh = Duration::from_millis(13);
+        let mut clock = clock(30, 100);
+        let t0 = Instant::now();
+        assert!(clock.frame_at(t0, refresh, false).is_some());
+        for k in 1..100 {
+            assert!(clock.frame_at(t0 + refresh * k, refresh, true).is_none());
+        }
+        let resume = t0 + refresh * 100;
+        assert!(clock.frame_at(resume, refresh, false).is_some());
+        assert!(clock.frame_at(resume + refresh, refresh, false).is_none());
+    }
+
+    #[test]
+    fn finished_only_after_the_last_frame_is_shown() {
+        let refresh = Duration::from_millis(13);
+        let mut clock = clock(30, 3);
+        assert!(!clock.finished());
+        let t0 = Instant::now();
+        let mut shown = 0;
+        for k in 0..20 {
+            shown += u64::from(clock.frame_at(t0 + refresh * k, refresh, false).is_some());
+            assert_eq!(clock.finished(), shown == 3, "refresh {k}");
+        }
+        assert_eq!(shown, 3);
     }
 
     #[test]
@@ -1085,7 +1206,11 @@ mod tests {
         let stdout = child.stdout.take().unwrap();
         let mut player = fake_player(child, stdout);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-        while player.take_frame().is_none() {
+        while player
+            .frames()
+            .frame_at(Instant::now(), Duration::from_millis(16))
+            .is_none()
+        {
             assert!(
                 std::time::Instant::now() < deadline,
                 "first fake frame timed out"

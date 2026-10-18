@@ -79,3 +79,28 @@ Plan and evidence: `docs/superpowers/plans/2026-10-17-live-feedback.md`; capture
 Verified: fmt, clippy -D warnings, 261 workspace tests. Native on the laptop display with window-only captures and HTTP control: cadence numbers above, fade frames, eight-step Next walk across document boundaries and the repeated item, click-to-arm then Space, 12-row rail and 520 pt drag, loading/missing/corrupt placeholders, pause/resume/stop for audio and video.
 
 Not verified by hand: the external display (not connected during this wave; laptop ProMotion + 60 Hz external is the case to re-measure with `.local/qa/g1/measure-cadence.sh`), Add files… through the file dialog (shows were built from JSON), book-preview flows after arming, grid scroll-into-view, gapless audio looping. Known gaps: the big Preview is a stretched 320×180 thumbnail (soft); video volume is not adjustable live; no seeking; a slide cannot force a hard cut while the show fades; panels are resizable but not dockable (pushed back in the plan).
+
+## Wave G2: projector timing, sharper preview, media fill, dockable panels (2026-10-18)
+
+Plan: `docs/superpowers/plans/2026-10-18-wave-g2.md`. QA scripts in `.local/qa/g1/` (`g2-run.sh`, `cmd.sh`, `cadence-lossless.sh`, `g2-cadence.sh`).
+
+### G2.1 Frame timing set by the audience window
+
+- `MediaPlayer` no longer has a pacer thread. The reader thread still fills a 3-frame channel; `MediaPlayer::frames()` returns a cloneable `FrameSource` whose `frame_at(now, refresh)` picks the newest frame due at `now` (frame `n` is due at `start + n/fps`, `start` anchored a quarter refresh before the first call, after a resume and after a stall of more than 250 ms). The audience window pulls with its own `stable_dt` and uploads into the shared `lumen-video` texture; with no audience the root does it in `MediaState::poll`. `Published.video` is `Some` only while the audience is open, which is how only one side pulls (no separate bool).
+- `lumen-video` is created as a 2×2 black texture when the player loads. `release_media_wait` now asks `FrameSource::has_frame()` so the previous picture is held until a real frame exists.
+- `is_finished()` now means the reader has ended and the buffered frames were all handed out. Playback only advances while something pulls frames, so the player tests pull.
+- **Plan deviation (root repaint):** while a video plays with the audience open the console repaints on a 16 ms timer instead of `request_repaint()`. With the console redrawing at its own 120 Hz, the audience window's passes landed 9–17 ms apart (it shares the main thread); with the timer they sit at 12–15 ms and there is exactly one pass per 75 Hz refresh. The LIVE monitor still shows 29.5 distinct frames per second.
+- **Plan deviation (measuring):** `screencapture -V` is too noisy to judge this. A synthetic audience that flips black/white every 3rd pass, which the video code cannot influence, already shows 35% of its pictures as 27/53 ms splits with that tool. The numbers below use `cadence-lossless.sh`: an unencoded avfoundation capture of the whole display, cropped and shrunk in the filter, counting how many refreshes each distinct picture stayed up. Its own floor on the same synthetic flip is 89% exact.
+
+Frame times on the L27q at 75 Hz (distinct pictures in 4 s; the display's real rate measures about 74.8 Hz from pass intervals):
+
+| Clip | Old code, refreshes per picture | New code |
+|---|---|---|
+| 30 fps | 2/3 in 99%, 100%, 87% of pictures (3 runs) | 2/3 in 88%, 99%, 94% |
+| 25 fps | 3 in 78%, 57%, 59% | 3 in 90%, 94%, 72% |
+
+Console LIVE monitor while the audience plays: 118 distinct pictures in 4 s (29.5 fps). Laptop only (120 Hz ProMotion, audience closed), pictures at exactly 4 refreshes: old 45%, 44%, 56%; new 70%, 81%, 48%. With `screencapture -V` on the audience, 30 fps clip: 13 ms ×17–19, 27 ms ×45–50, 40 ms ×41–46, 53 ms ×8–10 (plan's before: 13 ×26, 27 ×43, 40 ×43, 53 ×12). CPU about 14% of one core in all cases.
+
+The plan's 95% targets are not reached on every run. The residue is the display not being an exact multiple of the clip rate (74.8 Hz against 75 nominal, and a ProMotion laptop panel): the phase between frame times and refreshes drifts through the one-quarter-refresh margin every few seconds, where timing noise flips frames. A phase-locked clock that tracks the pass times would fix that; it is not in this wave.
+
+Tip for the operator: a 75 Hz projector can never show 30 fps evenly; the best is alternating 2- and 3-refresh frames. If most content is 30/60 fps, set the L27q to 60 Hz in System Settings → Displays. 25 fps content divides into 75 Hz exactly.

@@ -31,6 +31,8 @@ pub struct Published {
     pub output: OutputState,
     pub runtime: RuntimeView,
     pub media: Option<TextureHandle>,
+    /// Set while the audience window is open: it pulls video frames on its own refresh.
+    pub video: Option<lumen_media::FrameSource>,
     pub media_animating: bool,
 }
 #[derive(Clone, Default)]
@@ -466,6 +468,12 @@ impl LumenApp {
                 message: self.runtime.output.stage_message.clone(),
             },
             media: self.media.image_texture.clone(),
+            video: self
+                .media
+                .player
+                .as_ref()
+                .filter(|_| self.audience_open())
+                .map(lumen_media::MediaPlayer::frames),
             media_animating: self
                 .media
                 .player
@@ -999,7 +1007,7 @@ impl eframe::App for LumenApp {
         {
             self.transition = None;
         }
-        self.media.poll(ctx);
+        self.media.poll(ctx, !self.audience_open());
         self.release_media_wait();
         self.sync_deck();
         while let Some(result) = self.deck.poll() {
@@ -1177,15 +1185,18 @@ impl eframe::App for LumenApp {
             self.allow_close = true;
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
-        // Playing video and transitions repaint every frame (vsync-paced); the rest tick at 80 ms.
-        if self.transition.is_some()
-            || self
-                .media
-                .player
-                .as_ref()
-                .is_some_and(|p| !p.is_finished() && !p.is_paused())
-        {
+        // Transitions and video repaint every frame (vsync-paced); the rest tick at 80 ms.
+        let video_playing = self
+            .media
+            .player
+            .as_ref()
+            .is_some_and(|p| !p.is_finished() && !p.is_paused());
+        if self.transition.is_some() || (video_playing && !self.audience_open()) {
             ctx.request_repaint();
+        } else if video_playing {
+            // The audience window draws every frame of the video on its own refresh. A console
+            // redrawing at its own 120 Hz would make that window's passes land at uneven times.
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
         if self
             .runtime
@@ -1589,7 +1600,7 @@ impl LumenApp {
             }
         }
         let data = self.published.clone();
-        let audience_open = self.show_audience && self.runtime.output.deck.is_none();
+        let audience_open = self.audience_open();
         // macOS fullscreens a new window on the display it starts on, before the position
         // applies; open windowed on the chosen display, then go fullscreen a frame later.
         let audience_fullscreen = self.fullscreen_audience && self.audience_placed;
@@ -1611,7 +1622,14 @@ impl LumenApp {
                 )
                 .0,
                 move |ctx, _| {
-                    let state = data.lock().map(|s| s.clone()).unwrap_or_default();
+                    let mut state = data.lock().map(|s| s.clone()).unwrap_or_default();
+                    if let Some(video) = &state.video
+                        && let Some(texture) = state.media.as_mut()
+                        && let Some(frame) =
+                            video.frame_at(Instant::now(), crate::media::refresh_period(ctx))
+                    {
+                        crate::media::upload(texture, frame);
+                    }
                     if state.media_animating || state.transition.is_some() {
                         ctx.request_repaint();
                     } else if state.output.message.is_some() {
@@ -1888,13 +1906,20 @@ impl LumenApp {
         use chrono::Timelike;
         chrono::Local::now().num_seconds_from_midnight()
     }
+    fn audience_open(&self) -> bool {
+        self.show_audience && self.runtime.output.deck.is_none()
+    }
     fn sync_deck(&mut self) {
         self.deck.reconcile(self.runtime.output.deck.clone());
     }
     /// Starts the fade once the new media has a frame, or after 1.5 s so a bad file can't freeze the picture.
     fn release_media_wait(&mut self) {
-        let ready = (self.media.image_texture.is_some() && !self.media.pending)
-            || (!self.media.pending && self.media.player.is_none());
+        let ready = !self.media.pending
+            && self
+                .media
+                .player
+                .as_ref()
+                .is_none_or(|p| p.frames().has_frame());
         if let Some(t) = self.transition.as_mut().filter(|t| t.waiting_for_media)
             && (ready || t.started.elapsed() >= MEDIA_WAIT)
         {

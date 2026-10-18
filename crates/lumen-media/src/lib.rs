@@ -10,7 +10,7 @@ mod thumbnail;
 
 pub use audio::{AudioOptions, AudioPlayer, output_devices};
 pub use pdf::{pdf_page_count, render_pdf_page};
-pub use player::{Frame, MediaPlayer, PlaybackOptions};
+pub use player::{Frame, FrameSource, MediaPlayer, PlaybackOptions};
 pub use probe::{MediaInfo, probe, tool_availability};
 pub use thumbnail::{ThumbnailCache, thumbnail};
 

@@ -1,11 +1,26 @@
 use egui::{ColorImage, TextureHandle, TextureOptions};
 use lumen_core::Background;
-use lumen_media::{MediaPlayer, PlaybackOptions};
+use lumen_media::{Frame, MediaPlayer, PlaybackOptions};
 use std::{
     path::PathBuf,
     sync::mpsc::{self, Receiver, Sender},
     thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
+
+/// The display's refresh period from egui's frame time, kept within 24..240 Hz.
+pub fn refresh_period(ctx: &egui::Context) -> Duration {
+    Duration::from_secs_f32(ctx.input(|i| i.stable_dt).clamp(1.0 / 240.0, 1.0 / 24.0))
+}
+
+/// ffmpeg output is opaque, so straight and premultiplied alpha are identical.
+pub fn upload(texture: &mut TextureHandle, frame: Frame) {
+    let image = ColorImage::from_rgba_premultiplied(
+        [frame.width as usize, frame.height as usize],
+        &frame.rgba,
+    );
+    texture.set(image, TextureOptions::LINEAR);
+}
 
 pub enum Loaded {
     Image(u64, Result<(PathBuf, ColorImage), String>),
@@ -137,7 +152,8 @@ impl MediaState {
     pub fn remember_background(&mut self, background: Background) {
         self.requested_background = Some(background);
     }
-    pub fn poll(&mut self, ctx: &egui::Context) {
+    /// `pull_frames` is false while the audience window pulls them on its own refresh.
+    pub fn poll(&mut self, ctx: &egui::Context, pull_frames: bool) {
         self.reap_workers();
         while let Ok(event) = self.rx.try_recv() {
             match event {
@@ -157,7 +173,12 @@ impl MediaState {
                     if let Some(old) = self.player.replace(player) {
                         self.retire_player(old);
                     }
-                    self.image_texture = None;
+                    // A handle that exists before the first frame, so the audience can share it.
+                    self.image_texture = Some(ctx.load_texture(
+                        "lumen-video",
+                        ColorImage::filled([2, 2], egui::Color32::BLACK),
+                        TextureOptions::LINEAR,
+                    ));
                     self.image_path = None;
                     self.video_path = Some(p);
                     self.status = "Video playing".into();
@@ -173,18 +194,13 @@ impl MediaState {
             }
         }
         if let Some(player) = &self.player {
-            if let Some(f) = player.take_frame() {
-                // ffmpeg output is opaque, so straight and premultiplied alpha are identical.
-                let image = ColorImage::from_rgba_premultiplied(
-                    [f.width as usize, f.height as usize],
-                    &f.rgba,
-                );
-                if let Some(tex) = self.image_texture.as_mut() {
-                    tex.set(image, TextureOptions::LINEAR)
-                } else {
-                    self.image_texture =
-                        Some(ctx.load_texture("lumen-video", image, TextureOptions::LINEAR));
-                }
+            if pull_frames
+                && let Some(tex) = self.image_texture.as_mut()
+                && let Some(frame) = player
+                    .frames()
+                    .frame_at(Instant::now(), refresh_period(ctx))
+            {
+                upload(tex, frame);
             }
             if let Some(e) = player.error() {
                 self.status = format!("Video error: {e}");
