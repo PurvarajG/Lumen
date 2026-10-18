@@ -92,6 +92,9 @@ pub struct LumenApp {
     repaint_ctx: Context,
     native_quit_pending: bool,
     pub(super) present: bool,
+    /// Set when going live armed the next cue; becomes `scroll_to_armed` for exactly one frame.
+    arm_scroll: bool,
+    pub(super) scroll_to_armed: bool,
     pub(super) search: String,
     pub(super) focus_search: bool,
     pub(super) library_tab: usize,
@@ -200,6 +203,8 @@ impl LumenApp {
             repaint_ctx: cc.egui_ctx.clone(),
             native_quit_pending: false,
             present: true,
+            arm_scroll: false,
+            scroll_to_armed: false,
             search: String::new(),
             focus_search: false,
             library_tab: 0,
@@ -327,9 +332,40 @@ impl LumenApp {
                     self.media.stop();
                 }
                 self.sync_media();
+                self.arm_next();
             }
             Err(e) => self.error = e.to_string(),
         }
+    }
+    /// Sends the armed (selected) cue, the same action for the button, Space and Return.
+    pub(super) fn send_armed(&mut self) {
+        let ids = |l: &LiveSlide| (l.document_id, l.slide.id);
+        let armed = self.selected_live().as_ref().map(ids);
+        let next = self.runtime.peek_next(&self.project).as_ref().map(ids);
+        match armed {
+            // `navigate` takes the exact next occurrence; `trigger` by id could re-pick a repeated item.
+            Some((doc, slide))
+                if armed != next
+                    && self.runtime.output.deck.is_none()
+                    && !crate::books::has_preview(self) =>
+            {
+                self.trigger(doc, slide)
+            }
+            _ => self.navigate(true),
+        }
+    }
+    /// After a cue goes live in Present, select the one after it so the next send is the next cue.
+    fn arm_next(&mut self) {
+        let Some((doc, slide)) = armed_after_send(&self.runtime, &self.project, self.present)
+        else {
+            return;
+        };
+        // The selection moves, so a book result that was not sent stops being the preview.
+        crate::books::close_preview(self);
+        self.selected_doc = doc;
+        self.selected_slide = Some(slide);
+        self.arm_scroll = true;
+        self.repaint_ctx.request_repaint();
     }
     pub(super) fn sync_media(&mut self) {
         if self.runtime.output.media_cleared {
@@ -830,8 +866,10 @@ impl LumenApp {
             };
             use crate::shortcuts::Shortcut;
             match shortcut {
+                Shortcut::Next if self.present => self.send_armed(),
                 Shortcut::Next => self.navigate(true),
                 Shortcut::Previous => self.navigate(false),
+                Shortcut::Trigger if self.present => self.send_armed(),
                 Shortcut::Trigger => {
                     if let Some(l) = self.selected_live() {
                         self.trigger(l.document_id, l.slide.id)
@@ -900,6 +938,7 @@ impl eframe::App for LumenApp {
             cache.begin_frame();
         }
         let _ = frame;
+        self.scroll_to_armed = std::mem::take(&mut self.arm_scroll);
         let closing = ctx.input(|i| i.viewport().close_requested());
         if closing && self.dirty && !self.allow_close {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
@@ -1453,7 +1492,7 @@ impl LumenApp {
             });
         if self.show_help {
             egui::Window::new("Keyboard shortcuts").open(&mut self.show_help).show(ctx,|ui|{
-            ui.label("Space / Right / Page Down: Next. Left / Page Up: Previous. Return: Go live.");
+            ui.label("Space / Right / Page Down / Return: send the selected cue (Next). Left / Page Up: Previous.");
             ui.label("F1 All · F2 Slide · F3 Media · F4 Overlays · F5 Audio · F6 Messages. B: Blackout.");
             ui.label("Cmd+F Search. Cmd+Z Undo. Cmd+Shift+Z Redo. Shortcuts pause while editing text.");
             ui.label("Running order: Cmd+Up / Cmd+Down move the selected item. Delete removes it from the order (not the library).");
@@ -1913,6 +1952,7 @@ impl LumenApp {
             Ok(true) => {
                 self.after_trigger(previous, media);
                 self.sync_media();
+                self.arm_next();
             }
             Ok(false) => {}
             Err(e) => self.error = e.to_string(),
@@ -2168,9 +2208,65 @@ fn effective_transition(
     }
 }
 
+/// The cue to select after a send: the one after live, or live itself at the end of the order.
+/// `None` outside Present, where the selection belongs to the editor.
+fn armed_after_send(runtime: &Runtime, project: &Project, present: bool) -> Option<(Uuid, Uuid)> {
+    if !present {
+        return None;
+    }
+    let ids = |l: &LiveSlide| (l.document_id, l.slide.id);
+    runtime
+        .peek_next(project)
+        .as_ref()
+        .map(ids)
+        .or_else(|| runtime.output.live.as_ref().map(ids))
+}
+
 #[cfg(test)]
 mod console_safety_tests {
     use super::*;
+    fn three_documents() -> (Project, Vec<(Uuid, Uuid)>) {
+        let mut project = Project::demo();
+        project.documents.clear();
+        project.playlist.clear();
+        let theme = project.themes[0].id;
+        let mut cues = Vec::new();
+        for name in ["A", "B", "C"] {
+            let mut doc = Document::new(name);
+            let slide = lumen_core::Slide::new(theme);
+            cues.push((doc.id, slide.id));
+            doc.slides.push(slide);
+            project.playlist.push(PlaylistItem {
+                id: Uuid::new_v4(),
+                document_id: doc.id,
+            });
+            project.documents.push(doc);
+        }
+        (project, cues)
+    }
+    #[test]
+    fn sending_arms_the_cue_after_it_across_documents() {
+        let (project, cues) = three_documents();
+        let mut runtime = Runtime::default();
+        // Nothing live yet: the first cue is the one Next would send.
+        assert_eq!(armed_after_send(&runtime, &project, true), Some(cues[0]));
+        runtime.trigger(&project, cues[0].0, cues[0].1).unwrap();
+        assert_eq!(armed_after_send(&runtime, &project, true), Some(cues[1]));
+        runtime.next(&project).unwrap();
+        assert_eq!(armed_after_send(&runtime, &project, true), Some(cues[2]));
+        runtime.next(&project).unwrap();
+        // End of the order: the live cue stays selected.
+        assert_eq!(armed_after_send(&runtime, &project, true), Some(cues[2]));
+        runtime.previous(&project).unwrap();
+        assert_eq!(armed_after_send(&runtime, &project, true), Some(cues[2]));
+    }
+    #[test]
+    fn prepare_never_moves_the_selection() {
+        let (project, cues) = three_documents();
+        let mut runtime = Runtime::default();
+        runtime.trigger(&project, cues[0].0, cues[0].1).unwrap();
+        assert_eq!(armed_after_send(&runtime, &project, false), None);
+    }
     #[test]
     fn recovery_older_than_successful_save_or_replaced_project_is_removed() {
         assert!(recovery_is_obsolete(1, 2, 20, 0, false));

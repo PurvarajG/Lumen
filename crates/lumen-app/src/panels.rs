@@ -149,6 +149,17 @@ fn document_rows(app: &mut LumenApp, ui: &mut egui::Ui, docs: &[Uuid], reorder: 
     let next = app.runtime.peek_next(&app.project);
     let next_row = app.runtime.next_item_index(&app.project);
     let live_row = app.runtime.live_item_index(&app.project);
+    // The armed row is the one after live, or live itself at the end of the order.
+    let armed_row = next_row.or(live_row);
+    let armed_is_selected = armed_row
+        .and_then(|row| app.project.playlist.get(row))
+        .is_some_and(|item| item.document_id == app.selected_doc)
+        && app.selected_slide
+            == next
+                .as_ref()
+                .or(app.runtime.output.live.as_ref())
+                .map(|l| l.slide.id);
+    let scroll_to_armed = app.scroll_to_armed;
     let images = app.thumbnails.images();
     egui::ScrollArea::vertical()
         .id_salt("library-list")
@@ -181,7 +192,10 @@ fn document_rows(app: &mut LumenApp, ui: &mut egui::Ui, docs: &[Uuid], reorder: 
                             .as_ref()
                             .is_some_and(|n| n.document_id == *id)
                     };
-                    let selected = app.selected_doc == *id && !crate::books::has_preview(app);
+                    // A repeated document marks only the armed copy when it is the selected one.
+                    let selected = app.selected_doc == *id
+                        && !crate::books::has_preview(app)
+                        && !(reorder && armed_is_selected && armed_row != Some(index));
                     let (rect, r) = ui.allocate_exact_size(
                         Vec2::new(ui.available_width(), ROW_HEIGHT),
                         if reorder {
@@ -191,6 +205,9 @@ fn document_rows(app: &mut LumenApp, ui: &mut egui::Ui, docs: &[Uuid], reorder: 
                         },
                     );
                     rects.push(rect);
+                    if scroll_to_armed && selected && (!reorder || armed_row == Some(index)) {
+                        r.scroll_to_me(Some(egui::Align::Center));
+                    }
                     if selected {
                         ui.painter()
                             .rect_filled(rect, 3.0, style::SAFFRON.gamma_multiply(0.15));
@@ -425,8 +442,15 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
         }
         return;
     }
-    ui.heading("Preview");
     let preview = app.selected_live();
+    let next = app.runtime.peek_next(&app.project);
+    // "Up next" tells the operator that what they see is what the primary button sends.
+    let up_next = app.runtime.output.live.is_some()
+        && preview
+            .as_ref()
+            .zip(next.as_ref())
+            .is_some_and(|(p, n)| (p.document_id, p.slide.id) == (n.document_id, n.slide.id));
+    ui.heading(if up_next { "Up next" } else { "Preview" });
     let height = preview_height(ui.available_width(), ui.available_height());
     let texture = preview
         .as_ref()
@@ -515,7 +539,7 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
     ui.separator();
     let (columns, width) = grid_layout(ui.available_width(), ui.spacing().item_spacing.x);
     let slides = app.project.documents[index].slides.clone();
-    let next = app.runtime.peek_next(&app.project);
+    let scroll_to_armed = app.scroll_to_armed;
     egui::ScrollArea::vertical()
         .id_salt("cue-grid")
         .show(ui, |ui| {
@@ -535,6 +559,9 @@ pub fn slides(app: &mut LumenApp, ui: &mut egui::Ui) {
                                 },
                             );
                             tiles.push(rect);
+                            if scroll_to_armed && app.selected_slide == Some(slide.id) {
+                                r.scroll_to_me(Some(egui::Align::Center));
+                            }
                             if !app.present && (r.dragged() || r.drag_stopped()) {
                                 dragged = Some((row * columns + column, r.drag_stopped()));
                             }
@@ -703,14 +730,20 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
     } else {
         app.paint_live(ui, rect);
     }
-    let live_in_document = app
-        .runtime
-        .output
-        .live
-        .as_ref()
-        .is_some_and(|live| live.document_id == app.selected_doc)
-        || app.runtime.output.deck.is_some();
     let book_preview = crate::books::has_preview(app);
+    let ids = |l: &lumen_core::LiveSlide| (l.document_id, l.slide.id);
+    let armed = app.selected_live();
+    let next = app.runtime.peek_next(&app.project);
+    let label = if book_preview {
+        "Add and go live".to_owned()
+    } else {
+        primary_label(
+            armed.as_ref().map(|a| (ids(a), a.slide.label.as_str())),
+            next.as_ref().map(ids),
+            app.runtime.output.live.is_some(),
+            app.runtime.output.deck.is_some(),
+        )
+    };
     ui.horizontal(|ui| {
         if ui
             .add_sized(
@@ -724,20 +757,15 @@ pub fn inspector(app: &mut LumenApp, ui: &mut egui::Ui) {
         if ui
             .add_sized(
                 [ui.available_width(), style::PRIMARY],
-                style::primary(if book_preview {
-                    "Add and go live"
-                } else {
-                    transport_primary_label(live_in_document)
-                }),
+                style::primary(&label).truncate(),
             )
+            .on_hover_text(&label)
             .clicked()
         {
             if book_preview {
                 crate::books::add_and_go_live(app);
-            } else if live_in_document {
-                app.navigate(true);
-            } else if let Some(l) = app.selected_live() {
-                app.trigger(l.document_id, l.slide.id);
+            } else {
+                app.send_armed();
             }
         }
     });
@@ -868,8 +896,24 @@ fn tool_tabs(ui: &mut egui::Ui, tab: &mut usize) -> egui::InnerResponse<()> {
     })
 }
 
-fn transport_primary_label(live_in_document: bool) -> &'static str {
-    if live_in_document { "Next" } else { "Go live" }
+/// What the primary button sends: "Next" when the selected cue is the one after live,
+/// otherwise the selected cue by name.
+fn primary_label(
+    armed: Option<((Uuid, Uuid), &str)>,
+    next: Option<(Uuid, Uuid)>,
+    live: bool,
+    deck: bool,
+) -> String {
+    match armed {
+        _ if deck => "Next".into(),
+        Some((ids, _)) if live && Some(ids) == next => "Next".into(),
+        // shortcut: egui cannot shape Gujarati inside a button, so a Gujarati name falls back to
+        // the plain label (the Preview shows the shaped name); draw it with lumen-text if asked.
+        Some((_, name)) if live && !crate::text::contains_gujarati(name) => {
+            format!("Go live: {name}")
+        }
+        _ => "Go live".into(),
+    }
 }
 
 fn grid_layout(available: f32, gap: f32) -> (usize, f32) {
@@ -971,9 +1015,31 @@ mod transition_picker_tests {
 mod tests {
     use super::*;
     #[test]
-    fn transport_keeps_one_contextual_primary_label() {
-        assert_eq!(transport_primary_label(false), "Go live");
-        assert_eq!(transport_primary_label(true), "Next");
+    fn primary_label_names_what_the_button_sends() {
+        let (a, b) = (
+            (Uuid::new_v4(), Uuid::new_v4()),
+            (Uuid::new_v4(), Uuid::new_v4()),
+        );
+        assert_eq!(
+            primary_label(Some((a, "A")), Some(a), false, false),
+            "Go live"
+        );
+        assert_eq!(primary_label(None, Some(a), true, false), "Go live");
+        assert_eq!(primary_label(Some((a, "A")), Some(a), true, false), "Next");
+        assert_eq!(
+            primary_label(Some((b, "photo.png")), Some(a), true, false),
+            "Go live: photo.png"
+        );
+        // End of the order: nothing follows, so the selected live cue is re-sent by name.
+        assert_eq!(
+            primary_label(Some((a, "A")), None, true, false),
+            "Go live: A"
+        );
+        assert_eq!(primary_label(Some((b, "B")), Some(a), true, true), "Next");
+        assert_eq!(
+            primary_label(Some((b, "\u{0a97}\u{0ac1}")), Some(a), true, false),
+            "Go live"
+        );
     }
     #[test]
     fn all_five_tool_tabs_fit_one_row_at_minimum_column_width() {

@@ -21,7 +21,7 @@ Header row: project name · Prepare / Present segmented switch · output status 
 Three regions:
 1. **Left rail (280 pt, resizable):** Search field on top (books + library + playlist, results grouped), then Running order (playlist) and Library tabs, then Books (downloaded anirdesh books) tab.
 2. **Centre:** large Preview of the selected/on-deck cue with its label, then the cue grid (16:9 thumbnails, width-aware columns, labels below, LIVE / on-deck states).
-3. **Right column (360 pt):** Live output monitor (what the audience sees, with a red LIVE caption), transport (Previous · Go live/Next · Clear group), then tabbed tools: Timers · Messages · Props · Audio · Stage.
+3. **Right column (360 pt):** Live output monitor (what the audience sees, with a red LIVE caption), transport (Previous · Next / Go live: cue · Clear group), then tabbed tools: Timers · Messages · Props · Audio · Stage.
 
 Prepare mode swaps the right column's tools for the slide inspector (text, box, style, objects, background, audio, transition, actions) and enables editing affordances in the grid; transport stays visible but secondary.
 
@@ -35,7 +35,7 @@ Standard egui widgets only: buttons, tabs/segmented, text fields, combo boxes, s
 
 ## Keyboard (Present)
 
-Space / → / Page Down: next · ← / Page Up: previous · Return: go live with selection · F1 clear all · F2 clear slide · F3 clear media · F4 clear props · F5 clear audio · F6 clear messages · B blackout · Cmd+F search · Cmd+Z / Cmd+Shift+Z undo/redo. Shortcuts never fire while a text field has focus.
+The selected cue is the armed cue; going live arms the one after it (Present only), so the selection always shows what Next sends and the Preview reads "Up next". Space / → / Page Down / Return: send the armed cue (button: "Next", or "Go live: <cue>" after you pick another) · ← / Page Up: previous, then arm the cue after it · F1 clear all · F2 clear slide · F3 clear media · F4 clear props · F5 clear audio · F6 clear messages · B blackout · Cmd+F search · Cmd+Z / Cmd+Shift+Z undo/redo. Shortcuts never fire while a text field has focus.
 
 ## Motion
 
