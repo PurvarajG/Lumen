@@ -1287,11 +1287,12 @@ impl eframe::App for LumenApp {
             .player
             .as_ref()
             .is_some_and(|p| !p.is_finished() && !p.is_paused());
-        if self.transition.is_some() || (video_playing && !self.audience_open()) {
+        let animating = self.transition.is_some() || video_playing;
+        if animating && !self.audience_open() {
             ctx.request_repaint();
-        } else if video_playing {
-            // The audience window draws every frame of the video on its own refresh. A console
-            // redrawing at its own 120 Hz would make that window's passes land at uneven times.
+        } else if animating {
+            // The audience window draws every frame of a fade or video on its own refresh. A
+            // console redrawing at its own 120 Hz would make that window's passes land unevenly.
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
         if self

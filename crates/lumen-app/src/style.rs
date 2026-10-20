@@ -135,7 +135,6 @@ pub fn install(ctx: &egui::Context) {
     ] {
         widget.corner_radius = egui::CornerRadius::same(RADIUS);
     }
-    v.widgets.hovered.bg_stroke = Stroke::NONE;
     v.menu_corner_radius = egui::CornerRadius::same(RADIUS_SURFACE);
     v.window_corner_radius = egui::CornerRadius::same(RADIUS_SURFACE);
     v.text_cursor.stroke = Stroke::new(2.0_f32, SAFFRON);

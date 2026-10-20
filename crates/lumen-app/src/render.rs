@@ -424,8 +424,10 @@ fn paint_transition_layers(
     }
     match kind {
         Transition::Fade { .. } => {
+            // Old stays opaque under the new scene, so the picture never dips; same easing as captions.
+            let (_, new_alpha, _, _) = transition_frame(kind, t);
             paint_scene(ui, rect, &previous_scene, rect, 1.0, false);
-            paint_scene(ui, rect, &next_scene, rect, t, false);
+            paint_scene(ui, rect, &next_scene, rect, new_alpha, false);
         }
         Transition::FadeThroughBlack { .. } => {
             let (old_alpha, new_alpha, _, _) = transition_frame(kind, t);

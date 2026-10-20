@@ -234,9 +234,16 @@ fn document_rows(
                     if scroll_to_armed && selected && (!reorder || armed_row == Some(index)) {
                         r.scroll_to_me(Some(egui::Align::Center));
                     }
-                    if selected || r.hovered() || r.dragged() {
+                    // Hover stays weaker than selection so the next cue is never ambiguous.
+                    if selected {
                         ui.painter()
                             .rect_filled(rect, style::RADIUS_SURFACE, style::RAISED);
+                    } else if r.hovered() || r.dragged() {
+                        ui.painter().rect_filled(
+                            rect,
+                            style::RADIUS_SURFACE,
+                            style::RAISED.gamma_multiply(0.5),
+                        );
                     }
                     if r.has_focus() {
                         ui.painter().rect_stroke(
