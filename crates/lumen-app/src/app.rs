@@ -1164,6 +1164,7 @@ impl eframe::App for LumenApp {
         if self.last_display_scan.elapsed().as_secs() >= 1 {
             self.displays = crate::displays::enumerate_displays();
             self.last_display_scan = Instant::now();
+            self.upgrade_saved_displays();
         }
         if self
             .settings
@@ -2337,6 +2338,22 @@ impl LumenApp {
             self.edit_focus = None;
             self.ensure_selection();
             self.runtime.sync_timers(&self.project);
+        }
+    }
+    /// Saves the UUID of a monitor first found by name, so old settings pin a twin monitor once.
+    fn upgrade_saved_displays(&mut self) {
+        let mut changed = false;
+        for saved in [
+            &mut self.settings.audience_display,
+            &mut self.settings.stage_display,
+        ] {
+            if let Some(key) = crate::displays::upgraded_key(saved.as_ref(), &self.displays) {
+                *saved = Some(key);
+                changed = true;
+            }
+        }
+        if changed {
+            self.persist_settings();
         }
     }
     pub(super) fn persist_settings(&mut self) {

@@ -302,6 +302,7 @@ mod tests {
                 name: "d".into(),
                 width,
                 height,
+                uuid: None,
             },
             x: 0,
             y: 0,

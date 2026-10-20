@@ -13,6 +13,10 @@ pub struct DisplayKey {
     pub name: String,
     pub width: u32,
     pub height: u32,
+    /// The monitor's ColorSync UUID; unlike the name, it tells two identical monitors apart and
+    /// survives reboots and cable swaps. Absent in keys saved by earlier releases.
+    #[serde(default)]
+    pub uuid: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,11 +38,11 @@ impl DisplayInfo {
 }
 
 /// Match a persisted display identity to the currently attached displays, most exact first:
-/// same name and resolution; same name at any resolution (an LED processor or projector that
-/// renegotiated its mode); otherwise the only non-primary display, since a rented or swapped
-/// projector arrives under a new name. `None` when none applies.
+/// same UUID (when the saved key has one); same name and resolution; same name at any resolution
+/// (an LED processor or projector that renegotiated its mode); otherwise the only non-primary
+/// display, since a rented or swapped projector arrives under a new name. `None` when none applies.
 /// shortcut: the saved display's primary-ness is not stored, so a saved built-in screen with the
-/// lid closed and two externals attached can match the wrong external; fine until displays keep ids.
+/// lid closed and two externals attached can match the wrong external when its UUID is gone.
 pub fn match_display<'a>(
     saved: Option<&DisplayKey>,
     available: &'a [DisplayInfo],
@@ -49,14 +53,31 @@ pub fn match_display<'a>(
             .find(|display| display.primary)
             .or_else(|| available.first());
     };
-    available
-        .iter()
-        .find(|display| display.key == *saved)
+    saved
+        .uuid
+        .as_ref()
+        .and_then(|uuid| available.iter().find(|d| d.key.uuid.as_ref() == Some(uuid)))
+        .or_else(|| {
+            available.iter().find(|d| {
+                d.key.name == saved.name
+                    && d.key.width == saved.width
+                    && d.key.height == saved.height
+            })
+        })
         .or_else(|| available.iter().find(|d| d.key.name == saved.name))
         .or_else(|| {
             let mut others = available.iter().filter(|display| !display.primary);
             others.next().filter(|_| others.next().is_none())
         })
+}
+
+/// The key to save in place of an old one without a UUID, once its monitor is found by name.
+/// A stand-in found as the only other display is not an identity, and a saved UUID that is
+/// absent may come back, so neither is rewritten.
+pub fn upgraded_key(saved: Option<&DisplayKey>, available: &[DisplayInfo]) -> Option<DisplayKey> {
+    let saved = saved.filter(|key| key.uuid.is_none())?;
+    let found = match_display(Some(saved), available)?;
+    (found.key.name == saved.name && found.key.uuid.is_some()).then(|| found.key.clone())
 }
 
 /// Where an output window actually goes: its matched display, else the primary one.
@@ -246,6 +267,34 @@ mod macos {
         fn CGDisplayBounds(display: DisplayId) -> Rect;
         fn CGDisplayPixelsWide(display: DisplayId) -> usize;
         fn CGDisplayPixelsHigh(display: DisplayId) -> usize;
+        fn CGDisplayCreateUUIDFromDisplayID(display: DisplayId) -> *mut AnyObject;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFUUIDCreateString(allocator: *const AnyObject, uuid: *mut AnyObject) -> *mut AnyObject;
+        fn CFRelease(object: *mut AnyObject);
+    }
+
+    /// The display's ColorSync UUID as text, `None` if macOS has none for it.
+    fn display_uuid(id: DisplayId) -> Option<String> {
+        unsafe {
+            let uuid = CGDisplayCreateUUIDFromDisplayID(id);
+            if uuid.is_null() {
+                return None;
+            }
+            let text = CFUUIDCreateString(std::ptr::null(), uuid);
+            CFRelease(uuid);
+            if text.is_null() {
+                return None;
+            }
+            // A CFString is toll-free bridged to NSString.
+            let utf8: *const std::ffi::c_char = msg_send![text, UTF8String];
+            let out =
+                (!utf8.is_null()).then(|| CStr::from_ptr(utf8).to_string_lossy().into_owned());
+            CFRelease(text);
+            out
+        }
     }
 
     pub(super) fn enumerate() -> Vec<DisplayInfo> {
@@ -273,6 +322,7 @@ mod macos {
                         name,
                         width: unsafe { CGDisplayPixelsWide(id) } as u32,
                         height: unsafe { CGDisplayPixelsHigh(id) } as u32,
+                        uuid: display_uuid(id),
                     },
                     x: bounds.origin.x.round() as i32,
                     y: bounds.origin.y.round() as i32,
@@ -324,6 +374,7 @@ mod tests {
                 name: name.into(),
                 width,
                 height,
+                uuid: None,
             },
             x,
             y: 0,
@@ -357,6 +408,7 @@ mod tests {
             name: "Projector".into(),
             width: 1280,
             height: 720,
+            uuid: None,
         };
         assert_eq!(
             match_display(Some(&changed_resolution), &displays),
@@ -366,6 +418,7 @@ mod tests {
             name: "LED processor".into(),
             width: 3840,
             height: 2160,
+            uuid: None,
         };
         assert_eq!(match_display(Some(&renamed), &displays), Some(&displays[1]));
     }
@@ -381,10 +434,113 @@ mod tests {
             name: "LED processor".into(),
             width: 3840,
             height: 2160,
+            uuid: None,
         };
         assert_eq!(match_display(Some(&gone), &displays), None);
         assert_eq!(match_display(Some(&gone), &displays[..1]), None);
         assert_eq!(target_display(Some(&gone), &displays), Some(&displays[0]));
+    }
+
+    fn twin(name: &str, uuid: &str, x: i32) -> DisplayInfo {
+        let mut d = display(name, 3840, 2160, x);
+        d.key.uuid = Some(uuid.into());
+        d
+    }
+
+    #[test]
+    fn saved_uuid_picks_the_right_twin_even_when_the_names_swap() {
+        let saved = twin("LG ULTRAFINE (1)", "AAAA", 1152).key;
+        // After a reboot macOS hands out the suffixes the other way round.
+        let displays = [
+            display("Built-in", 3024, 1964, 0),
+            twin("LG ULTRAFINE (1)", "BBBB", -768),
+            twin("LG ULTRAFINE (2)", "AAAA", 1152),
+        ];
+        assert_eq!(match_display(Some(&saved), &displays), Some(&displays[2]));
+        let swapped = [
+            displays[0].clone(),
+            displays[2].clone(),
+            displays[1].clone(),
+        ];
+        assert_eq!(match_display(Some(&saved), &swapped), Some(&swapped[1]));
+    }
+
+    #[test]
+    fn a_key_without_uuid_still_matches_by_name_and_points_sized_keys_by_name() {
+        let displays = [
+            display("Built-in", 3024, 1964, 0),
+            twin("LG ULTRAFINE (1)", "AAAA", 1152),
+            twin("LG ULTRAFINE (2)", "BBBB", -768),
+        ];
+        let old = DisplayKey {
+            name: "LG ULTRAFINE (2)".into(),
+            width: 3840,
+            height: 2160,
+            uuid: None,
+        };
+        assert_eq!(match_display(Some(&old), &displays), Some(&displays[2]));
+        // Saved by an earlier release in points.
+        let points = DisplayKey {
+            width: 1920,
+            height: 1080,
+            ..old
+        };
+        assert_eq!(match_display(Some(&points), &displays), Some(&displays[2]));
+    }
+
+    #[test]
+    fn a_vanished_uuid_falls_through_to_name_then_the_only_other_display() {
+        let gone = DisplayKey {
+            name: "LG ULTRAFINE (2)".into(),
+            width: 3840,
+            height: 2160,
+            uuid: Some("GONE".into()),
+        };
+        let both = [
+            display("Built-in", 3024, 1964, 0),
+            twin("LG ULTRAFINE (1)", "AAAA", 1152),
+            twin("LG ULTRAFINE (2)", "BBBB", -768),
+        ];
+        assert_eq!(match_display(Some(&gone), &both), Some(&both[2]));
+        let one = &both[..2];
+        assert_eq!(match_display(Some(&gone), one), Some(&one[1]));
+        let renamed = DisplayKey {
+            name: "Other".into(),
+            ..gone
+        };
+        assert_eq!(match_display(Some(&renamed), &both), None);
+    }
+
+    #[test]
+    fn only_a_name_match_upgrades_an_old_key() {
+        let displays = [
+            display("Built-in", 3024, 1964, 0),
+            twin("LG ULTRAFINE (1)", "AAAA", 1152),
+            twin("LG ULTRAFINE (2)", "BBBB", -768),
+        ];
+        let old = DisplayKey {
+            name: "LG ULTRAFINE (2)".into(),
+            width: 1920,
+            height: 1080,
+            uuid: None,
+        };
+        assert_eq!(
+            upgraded_key(Some(&old), &displays),
+            Some(displays[2].key.clone())
+        );
+        assert_eq!(upgraded_key(Some(&displays[2].key), &displays), None);
+        assert_eq!(upgraded_key(None, &displays), None);
+        // A stand-in found as the only other display is not written over the saved identity.
+        let stand_in = DisplayKey {
+            name: "Rented projector".into(),
+            ..old.clone()
+        };
+        assert_eq!(upgraded_key(Some(&stand_in), &displays[..2]), None);
+        // A built-in screen has a uuid too; one without (e.g. unknown) is left alone.
+        assert_eq!(
+            upgraded_key(Some(&old), &[display("LG ULTRAFINE (2)", 1, 1, 5)]),
+            None
+        );
     }
 
     #[test]
@@ -409,6 +565,7 @@ mod tests {
             name: "Gone".into(),
             width: 800,
             height: 600,
+            uuid: None,
         };
         // Only the laptop is attached, so nothing else can stand in for the missing display.
         assert_eq!(match_display(Some(&missing), &displays[..1]), None);
