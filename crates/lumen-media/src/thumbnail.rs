@@ -31,9 +31,10 @@ pub fn thumbnail(path: &Path, max_w: u32, max_h: u32) -> Result<Frame, MediaErro
         .ok_or_else(|| {
             MediaError::InvalidOptions("thumbnail buffer size overflows address space".into())
         })?;
+    // ffprobe gives a still JPEG a 0.04 s duration, and seeking into it yields no frame.
     let seek = info
         .duration_secs
-        .filter(|d| *d > 0.0)
+        .filter(|d| *d >= 0.5)
         .map(|d| d.min(1.0).min(d * 0.1));
     let mut command = Command::new("ffmpeg");
     command.args(["-hide_banner", "-loglevel", "error", "-nostdin"]);
@@ -346,6 +347,22 @@ mod tests {
             .unwrap();
         assert!(status.success());
         assert_fit(&thumbnail(&video, 64, 64).unwrap());
+    }
+
+    #[test]
+    fn still_jpeg_gets_a_thumbnail() {
+        // Camera JPEGs carry big headers (Exif etc.); ffprobe then reports them as 0.04 s long,
+        // and seeking into that yields no frame. A 2 KB comment segment reproduces it.
+        let Some((_dir, jpg)) = fixture("jpg", "color=c=red:s=64x48") else {
+            return;
+        };
+        let mut bytes = std::fs::read(&jpg).unwrap();
+        let mut comment = vec![0xFF, 0xFE, 0x08, 0x02];
+        comment.resize(2050 + 2, b'x');
+        bytes.splice(20..20, comment); // right after the 18-byte JFIF header
+        std::fs::write(&jpg, bytes).unwrap();
+        let frame = thumbnail(&jpg, 320, 180).unwrap();
+        assert_eq!((frame.width, frame.height), (64, 48));
     }
 
     #[test]
