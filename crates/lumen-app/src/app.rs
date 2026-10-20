@@ -1209,7 +1209,7 @@ impl eframe::App for LumenApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(if self.dirty { "UNSAVED" } else { "Saved" });
-                    ui.separator();
+                    ui.add_space(crate::style::GAP * 2.0);
                     let path_text = self
                         .path
                         .as_ref()
@@ -1223,11 +1223,13 @@ impl eframe::App for LumenApp {
                         .unwrap_or_else(|| "No file".into());
                     ui.add(egui::Label::new(file_name).truncate())
                         .on_hover_text(path_text);
-                    ui.separator();
+                    ui.add_space(crate::style::GAP * 2.0);
                     ui.label(&self.status);
                     if !self.error.is_empty() {
+                        let visible_error = shorten_status_error_path(&self.error);
                         ui.horizontal(|ui| {
-                            ui.colored_label(crate::style::WARN, &self.error);
+                            ui.colored_label(crate::style::WARN, visible_error)
+                                .on_hover_text(&self.error);
                             if self.error.contains("Keynote isn't installed")
                                 && ui.small_button("Get Keynote").clicked()
                             {
@@ -1484,7 +1486,7 @@ impl LumenApp {
                     } else {
                         crate::brand::lockup(ui, false, first_row_width, &self.project.name);
                         // Keeps "Lumen" from reading as the label of the show-name field.
-                        ui.separator();
+                        ui.add_space(crate::style::GAP * 2.0);
                         ui.add(
                             egui::TextEdit::singleline(&mut self.project.name)
                                 .desired_width(160.0)
@@ -1494,7 +1496,7 @@ impl LumenApp {
                     ui.separator();
                     ui.selectable_value(&mut self.present, false, "Prepare");
                     ui.selectable_value(&mut self.present, true, "Present");
-                    ui.separator();
+                    ui.add_space(crate::style::GAP * 2.0);
                     for (name, open) in
                         [("Audience", self.show_audience), ("Stage", self.show_stage)]
                     {
@@ -1545,6 +1547,7 @@ impl LumenApp {
                     }
                 });
                 ui.horizontal(|ui| {
+                    crate::style::ghost(ui);
                     ui.menu_button("File", |ui| {
                         if ui.button("New").clicked() {
                             self.request(Pending::New);
@@ -2587,6 +2590,30 @@ enum OutputStatus {
     On,
     Error,
 }
+fn shorten_status_error_path(error: &str) -> String {
+    let Some((prefix, path_prefix, rest)) = ["Cannot open deck ", "Couldn't read recovery "]
+        .iter()
+        .find_map(|path_prefix| {
+            error
+                .split_once(path_prefix)
+                .map(|(prefix, rest)| (prefix, *path_prefix, rest))
+        })
+    else {
+        return error.to_owned();
+    };
+    let Some((path, suffix)) = rest.split_once(": ") else {
+        return error.to_owned();
+    };
+    let path = std::path::Path::new(path);
+    if !path.is_absolute() {
+        return error.to_owned();
+    }
+    let Some(name) = path.file_name() else {
+        return error.to_owned();
+    };
+    format!("{prefix}{path_prefix}{}: {suffix}", name.to_string_lossy())
+}
+
 fn output_pill(ui: &mut egui::Ui, name: &str, status: OutputStatus) -> egui::Response {
     let tint = match status {
         OutputStatus::Off => crate::style::TEXT_DIM,
@@ -2606,12 +2633,10 @@ fn output_pill(ui: &mut egui::Ui, name: &str, status: OutputStatus) -> egui::Res
         egui::vec2(galley.size().x + 30.0, 28.0),
         egui::Sense::click(),
     );
-    ui.painter().rect_stroke(
-        rect,
-        14.0,
-        egui::Stroke::new(1.0_f32, tint),
-        egui::StrokeKind::Inside,
-    );
+    if !matches!(status, OutputStatus::Off) {
+        ui.painter()
+            .rect_filled(rect, 14.0, tint.gamma_multiply(0.15));
+    }
     if response.has_focus() {
         ui.painter().rect_stroke(
             rect.expand(2.0),
@@ -2631,4 +2656,42 @@ fn output_pill(ui: &mut egui::Ui, name: &str, status: OutputStatus) -> egui::Res
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label.clone())
     });
     response
+}
+
+#[cfg(test)]
+mod status_error_tests {
+    use super::shorten_status_error_path;
+
+    #[test]
+    fn shortens_known_deck_paths_and_preserves_other_message_text() {
+        assert_eq!(
+            shorten_status_error_path("Cannot open deck /Users/me/Shows/Opening Night.key: denied"),
+            "Cannot open deck Opening Night.key: denied"
+        );
+        assert_eq!(
+            shorten_status_error_path(
+                "Cannot open deck /Users/me/My Shows/Opening Night.key: denied"
+            ),
+            "Cannot open deck Opening Night.key: denied"
+        );
+        assert_eq!(
+            shorten_status_error_path(
+                "Couldn't read recovery /Users/me/My Shows/recovery.json: denied"
+            ),
+            "Couldn't read recovery recovery.json: denied"
+        );
+        assert_eq!(
+            shorten_status_error_path(
+                "Cannot open deck /Users/me/Show.key: denied, see https://example.com/a/b."
+            ),
+            "Cannot open deck Show.key: denied, see https://example.com/a/b."
+        );
+        for text in [
+            "See https://example.com/a/b for details",
+            "ordinary slash text a/b/c",
+            "Cannot open deck relative/path.key: denied",
+        ] {
+            assert_eq!(shorten_status_error_path(text), text);
+        }
+    }
 }
