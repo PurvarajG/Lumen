@@ -395,7 +395,7 @@ fn bundled_root() -> Option<PathBuf> {
     books.is_dir().then_some(books)
 }
 
-/// Loads every catalog book: the user's own copy when it loads, else the bundled one.
+/// Loads every catalog book: the bundled copy when it loads, else the user's own.
 fn load_installed(root: Option<&Path>, bundled: Option<&Path>) -> Installed {
     let (mut books, mut sizes, mut errors) = (Vec::new(), HashMap::new(), HashMap::new());
     let (mut included, mut partials) = (HashSet::new(), HashMap::new());
@@ -421,14 +421,14 @@ fn load_installed(root: Option<&Path>, bundled: Option<&Path>) -> Installed {
     for info in catalog() {
         let own = root.and_then(|dir| load(dir, info.id));
         let shipped = bundled.and_then(|dir| load(dir, info.id));
-        let (book, size) = match (own, shipped) {
-            (Some(Ok(book)), _) => (book, disk_sizes.get(info.id).copied().unwrap_or(0)),
-            (_, Some(Ok(book))) => {
+        let (book, size) = match (shipped, own) {
+            (Some(Ok(book)), _) => {
                 included.insert(info.id.to_string());
                 let path = bundled.map(|dir| dir.join(info.id).join("book.json"));
                 let size = path.and_then(|p| std::fs::metadata(p).ok());
                 (book, size.map_or(0, |m| m.len()))
             }
+            (_, Some(Ok(book))) => (book, disk_sizes.get(info.id).copied().unwrap_or(0)),
             (Some(Err(error)), _) | (None, Some(Err(error))) => {
                 errors.insert(info.id.into(), error);
                 continue;
@@ -518,8 +518,10 @@ impl Books {
             recent: vec![],
             focus_add: false,
         };
+        // A packaged app has its books; a stale queue must not start network requests.
         for id in downloads
             .iter()
+            .filter(|_| state.bundled.is_none())
             .filter(|id| catalog().iter().any(|b| b.id == id.as_str()))
         {
             state.queue.enqueue(id);
@@ -891,7 +893,7 @@ pub fn search_field(app: &mut LumenApp, ui: &mut egui::Ui) -> bool {
         } else {
             "No matches. Try a title, passage label or first line."
         });
-        if app.books.installed.is_empty() {
+        if app.books.installed.is_empty() && app.books.bundled.is_none() {
             ui.label("Download books to search their passages offline.");
             if ui.button("Download books").clicked() {
                 app.books.search_open = false;
@@ -946,7 +948,7 @@ pub fn search_field(app: &mut LumenApp, ui: &mut egui::Ui) -> bool {
 
 pub fn catalog_panel(app: &mut LumenApp, ui: &mut egui::Ui) {
     if !app.settings.books_note_seen {
-        ui.label(if app.books.included.is_empty() {
+        ui.label(if app.books.bundled.is_none() {
             "Books are downloaded from anirdesh.com to this Mac for personal use."
         } else {
             "The books are included with the app, from anirdesh.com, with permission from BAPS."
@@ -957,7 +959,7 @@ pub fn catalog_panel(app: &mut LumenApp, ui: &mut egui::Ui) {
         }
         ui.separator();
     }
-    if app.books.root.is_none() {
+    if app.books.root.is_none() && app.books.bundled.is_none() {
         ui.colored_label(
             style::WARN,
             "Home folder unavailable. Set LUMEN_DATA_DIR and restart to download books.",
@@ -1028,26 +1030,40 @@ pub fn catalog_panel(app: &mut LumenApp, ui: &mut egui::Ui) {
             return;
         }
     }
-    if app.books.installed.is_empty() {
+    if app.books.installed.is_empty() && app.books.bundled.is_none() {
         ui.label("No books downloaded yet. Download a book to read and search offline.");
     }
     egui::ScrollArea::vertical()
         .id_salt("books-catalog")
         .show(ui, |ui| {
             for info in catalog() {
+                let included = app.books.included.contains(info.id);
+                // A packaged app lists its included books (and any copy the user already has),
+                // never a Download button.
+                if app.books.bundled.is_some()
+                    && !included
+                    && !matches!(
+                        app.books.states.get(info.id),
+                        Some(DownloadState::Downloaded { .. })
+                    )
+                {
+                    continue;
+                }
                 ui.push_id(info.id, |ui| {
                     gu_label(ui, info.title_gu, style::HEADING);
                     ui.label(info.title_en);
                     let minutes = (info.pages as f32 * 1.1 / 60.0).ceil().max(1.0) as usize;
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{} units · ≈ {:.1} MB · ≈ {minutes} min",
-                            info.units,
-                            info.units as f32 * 4.0 / 1024.0
-                        ))
-                        .color(style::TEXT_DIM)
-                        .size(style::CAPTION),
-                    );
+                    if !included {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} units · ≈ {:.1} MB · ≈ {minutes} min",
+                                info.units,
+                                info.units as f32 * 4.0 / 1024.0
+                            ))
+                            .color(style::TEXT_DIM)
+                            .size(style::CAPTION),
+                        );
+                    }
                     let state = app
                         .books
                         .states
@@ -1114,7 +1130,6 @@ pub fn catalog_panel(app: &mut LumenApp, ui: &mut egui::Ui) {
                                 });
                             }
                             DownloadState::Downloaded { bytes } => {
-                                let included = app.books.included.contains(info.id);
                                 ui.label(format!(
                                     "{} · {:.1} MB",
                                     if included { "Included" } else { "Downloaded" },
@@ -1629,7 +1644,7 @@ mod tests {
     }
 
     #[test]
-    fn bundled_books_fill_in_for_missing_ones_and_the_users_copy_wins() {
+    fn bundled_books_fill_in_for_missing_ones_and_the_bundled_copy_wins() {
         let base = std::env::temp_dir().join(format!("lumen-bundled-{}", Uuid::new_v4()));
         let (own, shipped) = (base.join("own"), base.join("bundle"));
         write_book(&shipped, "vachanamrut", "bundled");
@@ -1647,18 +1662,47 @@ mod tests {
                 .map(|b| b.title_en.clone())
         };
         assert_eq!(title("vachanamrut").as_deref(), Some("bundled"));
-        assert_eq!(title("vato").as_deref(), Some("own"));
+        assert_eq!(title("vato").as_deref(), Some("bundled"));
         assert_eq!(title("diksha").as_deref(), Some("own"));
         assert_eq!(title("gita"), None);
-        assert_eq!(loaded.included, HashSet::from(["vachanamrut".to_string()]));
+        assert_eq!(
+            loaded.included,
+            HashSet::from(["vachanamrut".to_string(), "vato".to_string()])
+        );
         assert_eq!(loaded.partials.get("kirtan"), Some(&1));
         assert!(loaded.sizes["vachanamrut"] > 0);
+
+        // A bundled copy that won't load gives way to the user's own.
+        std::fs::write(shipped.join("vato/book.json"), b"not json").unwrap();
+        let loaded = load_installed(Some(&own), Some(&shipped));
+        assert_eq!(
+            loaded
+                .books
+                .iter()
+                .find(|b| b.id == "vato")
+                .map(|b| b.title_en.as_str()),
+            Some("own")
+        );
+        assert!(!loaded.included.contains("vato"));
 
         // Without a bundle the same data dir behaves as before.
         let loaded = load_installed(Some(&own), None);
         assert_eq!(loaded.books.len(), 2);
         assert!(loaded.included.is_empty());
         std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn a_stale_download_queue_is_ignored_in_a_bundled_build() {
+        let shipped = std::env::temp_dir().join(format!("lumen-bundle-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&shipped).unwrap();
+        let ctx = egui::Context::default();
+        let queued = ["kirtan".to_string()];
+        let bundled = Books::at_root(&ctx, None, Some(shipped.clone()), &queued);
+        assert!(bundled.queue.saved().is_empty());
+        let dev = Books::at_root(&ctx, None, None, &queued);
+        assert_eq!(dev.queue.saved(), ["kirtan"]);
+        std::fs::remove_dir_all(shipped).unwrap();
     }
 
     #[test]
