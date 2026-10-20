@@ -161,10 +161,10 @@ on replaceText(theText, findText, replaceWith)
 end replaceText"#;
 const KEYNOTE_NEXT: &str = "tell application id \"com.apple.iWork.Keynote\" to show next";
 const KEYNOTE_PREVIOUS: &str = "tell application id \"com.apple.iWork.Keynote\" to show previous";
-const POWERPOINT_NEXT: &str = "tell application id \"com.microsoft.Powerpoint\" to go to next slide slideshow view of slide show window 1";
-const POWERPOINT_PREVIOUS: &str = "tell application id \"com.microsoft.Powerpoint\" to go to previous slide slideshow view of slide show window 1";
+pub(crate) const POWERPOINT_NEXT: &str = "tell application id \"com.microsoft.Powerpoint\" to go to next slide slideshow view of slide show window 1";
+pub(crate) const POWERPOINT_PREVIOUS: &str = "tell application id \"com.microsoft.Powerpoint\" to go to previous slide slideshow view of slide show window 1";
 const KEYNOTE_STOP: &str = "tell application id \"com.apple.iWork.Keynote\" to stop front document";
-const POWERPOINT_STOP: &str = "tell application id \"com.microsoft.Powerpoint\" to exit slide show slideshow view of slide show window 1";
+pub(crate) const POWERPOINT_STOP: &str = "tell application id \"com.microsoft.Powerpoint\" to exit slide show slideshow view of slide show window 1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DeckApp {

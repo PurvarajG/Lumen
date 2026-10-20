@@ -33,3 +33,12 @@ wgpu = { version = "=27.0.1", default-features = false, features = ["metal"] }
 objc2 = "=0.5.3"
 objc2-app-kit = { version = "=0.2.2", features = ["NSApplication", "NSResponder", "NSWorkspace", "NSRunningApplication"] }
 objc2-foundation = { version = "=0.2.2", features = ["NSThread", "NSString", "NSURL"] }
+# Window capture of a PowerPoint slideshow (H2.5): the objc2 0.6 line, under their own names beside
+# the 0.5 crates above. The sample buffer is read through two C calls, so core-video is not needed.
+objc2-screen-capture-kit = { version = "0.3.2", default-features = false, features = ["std", "SCShareableContent", "SCStream", "block2", "dispatch2", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media"] }
+objc2-core-media = { version = "0.3.2", default-features = false, features = ["CMTime", "CMSampleBuffer"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFCGTypes", "objc2"] }
+objc2-v6 = { package = "objc2", version = "0.6.5" }
+objc2-foundation-v6 = { package = "objc2-foundation", version = "0.3.2", default-features = false, features = ["alloc", "NSError", "NSString", "NSArray", "NSObject"] }
+block2 = "0.6.2"
+dispatch2 = "0.3.1"

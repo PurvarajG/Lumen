@@ -28,6 +28,9 @@ pub struct LiveSlide {
 pub struct OutputState {
     #[serde(default)]
     pub deck: Option<std::path::PathBuf>,
+    /// A deck playing in a captured PowerPoint window; its frames are the live background.
+    #[serde(default)]
+    pub deck_capture: Option<std::path::PathBuf>,
     pub live: Option<LiveSlide>,
     #[serde(default)]
     pub underlay: Option<crate::Background>,
@@ -338,6 +341,8 @@ impl Runtime {
         });
         candidate.output.clear_text = false;
         candidate.output.media_cleared = false;
+        // Moving to another cue leaves a captured deck; the slide's own actions may start one.
+        candidate.output.deck_capture = None;
         candidate.cursor = cursor;
         candidate.apply_actions_unchecked(project, &slide.actions);
         *self = candidate;
@@ -490,16 +495,28 @@ impl Runtime {
             match action {
                 CueAction::Blackout(value) => self.output.blackout = *value,
                 CueAction::ClearText(value) => self.output.clear_text = *value,
-                CueAction::PlayDeck { path } => self.output.deck = Some(path.clone()),
-                CueAction::StopDeck => self.output.deck = None,
+                CueAction::PlayDeck { path } => {
+                    self.output.deck = Some(path.clone());
+                    self.output.deck_capture = None;
+                }
+                CueAction::PlayDeckInLumen { path } => {
+                    self.output.deck_capture = Some(path.clone());
+                    self.output.deck = None;
+                }
+                CueAction::StopDeck => {
+                    self.output.deck = None;
+                    self.output.deck_capture = None;
+                }
                 CueAction::ClearSlide => {
                     // Like an opaque slide's own background, a caption's underlay stays visible.
                     self.output.deck = None;
+                    self.output.deck_capture = None;
                     self.output.clear_text = true;
                 }
                 CueAction::ClearMedia => self.output.media_cleared = true,
                 CueAction::ClearAll => {
                     self.output.deck = None;
+                    self.output.deck_capture = None;
                     self.output.live = None;
                     self.output.underlay = None;
                     self.output.clear_text = false;
@@ -784,5 +801,62 @@ mod tests {
             .unwrap();
         project.themes[0].font_size = 177.0;
         assert_eq!(runtime.output.prop_theme_snapshots, vec![theme]);
+    }
+
+    #[test]
+    fn a_captured_deck_lasts_until_another_cue_or_a_stop() {
+        let project = Project::demo();
+        let (doc, first, second) = {
+            let d = &project.documents[0];
+            (d.id, d.slides[0].id, d.slides[1].id)
+        };
+        let play = CueAction::PlayDeckInLumen {
+            path: "talk.pptx".into(),
+        };
+        let mut runtime = Runtime::default();
+        runtime.trigger(&project, doc, first).unwrap();
+        runtime
+            .apply_actions(&project, std::slice::from_ref(&play))
+            .unwrap();
+        assert_eq!(runtime.output.deck_capture, Some("talk.pptx".into()));
+        assert_eq!(runtime.output.deck, None);
+        // The fullscreen path replaces it, and either one replaces the other.
+        runtime
+            .apply_actions(
+                &project,
+                &[CueAction::PlayDeck {
+                    path: "talk.pptx".into(),
+                }],
+            )
+            .unwrap();
+        assert_eq!(
+            (
+                runtime.output.deck_capture.clone(),
+                runtime.output.deck.is_some()
+            ),
+            (None, true)
+        );
+        runtime
+            .apply_actions(&project, std::slice::from_ref(&play))
+            .unwrap();
+        runtime
+            .apply_actions(&project, &[CueAction::StopDeck])
+            .unwrap();
+        assert_eq!(runtime.output.deck_capture, None);
+        runtime
+            .apply_actions(&project, std::slice::from_ref(&play))
+            .unwrap();
+        runtime.trigger(&project, doc, second).unwrap();
+        assert_eq!(
+            runtime.output.deck_capture, None,
+            "leaving the cue stops it"
+        );
+        runtime
+            .apply_actions(&project, std::slice::from_ref(&play))
+            .unwrap();
+        runtime
+            .apply_actions(&project, &[CueAction::ClearAll])
+            .unwrap();
+        assert_eq!(runtime.output.deck_capture, None);
     }
 }

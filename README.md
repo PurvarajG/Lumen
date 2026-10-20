@@ -65,6 +65,7 @@ A development build that is not packaged has no included books; the Books tab th
 
 - **PDF (still pages):** File → Import… a `.pdf`. Each page becomes a slide, rendered from the PDF's vectors at every output's real pixel size, so text and shapes stay sharp on the projector. Export a PowerPoint or Keynote deck as PDF when it has no animations.
 - **PowerPoint / Keynote (animated decks):** File → Import… a `.pptx`, `.ppt` or `.key`. Lumen creates a "Play" cue; going live on it opens the deck in PowerPoint or Keynote and starts the real slideshow, so builds, transitions and embedded video play exactly as authored. While it plays, Lumen's Next/Previous (buttons, arrow keys, remote, OSC, MIDI) drive the deck; F1/F2 or Stop deck ends it. macOS asks once for permission to let Lumen control PowerPoint/Keynote. Requires PowerPoint or Keynote installed.
+- **Play inside Lumen (PowerPoint, macOS 13+):** right-click a deck slide → **Play inside Lumen**. PowerPoint plays the show in a window that Lumen captures and paints as the audience background, so the audience screen stays Lumen's, Lumen's transitions apply when entering and leaving the deck, and Next/Previous (keyboard, clicker, HTTP, OSC, MIDI) step PowerPoint's builds and slides while it is live. Choosing another cue stops the show. It needs **Screen Recording** permission for Lumen (System Settings → Privacy & Security) and the same Automation permission as above; without Screen Recording, or if PowerPoint gives no picture within 3 seconds, Lumen says why and plays the deck fullscreen in PowerPoint instead. If PowerPoint quits or the capture stops mid-show, the last picture stays up and Next moves on. **Play in PowerPoint (fullscreen)** in the same menu keeps the old behaviour. Do not hide (Cmd+H) or minimise PowerPoint during a show: its picture freezes.
 
 ## Keyboard Shortcuts (Present Mode)
 
@@ -178,6 +179,7 @@ Lumen accepts MIDI Note-On events (`0x90..=0x9F`, `velocity > 0`) on any configu
 - **Gujarati Typography:**
   - Bundled fallback: **Noto Sans Gujarati** (SIL Open Font License) is embedded and always active.
   - High-fidelity optional font: **ChitraUni** (commercial font, © Summit Information Technologies). If installed in Font Book (`~/Library/Fonts` or `/Library/Fonts`), Lumen automatically detects and shapes text with ChitraUni.
+- **Screen Recording (optional):** only for "Play inside Lumen". Lumen uses Apple's ScreenCaptureKit through the `objc2-screen-capture-kit` and `objc2-core-media` crates (plus `objc2` 0.6, `block2` and `dispatch2`, already in the build for other crates); nothing is downloaded or installed.
 - **Network:** Not required. The books are included; playback, searching and control all work offline.
 
 ---

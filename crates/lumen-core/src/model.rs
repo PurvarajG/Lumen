@@ -336,7 +336,13 @@ pub struct Macro {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum CueAction {
-    PlayDeck { path: PathBuf },
+    PlayDeck {
+        path: PathBuf,
+    },
+    /// Plays a PowerPoint deck in a window that Lumen captures into its own audience output.
+    PlayDeckInLumen {
+        path: PathBuf,
+    },
     StopDeck,
     Blackout(bool),
     ClearText(bool),
@@ -346,13 +352,25 @@ pub enum CueAction {
     ClearAudio,
     ClearMessages,
     StageMessage(String),
-    StartTimer { id: Uuid },
-    PauseTimer { id: Uuid },
-    ResetTimer { id: Uuid },
-    TriggerProp { id: Uuid },
-    HideProp { id: Uuid },
+    StartTimer {
+        id: Uuid,
+    },
+    PauseTimer {
+        id: Uuid,
+    },
+    ResetTimer {
+        id: Uuid,
+    },
+    TriggerProp {
+        id: Uuid,
+    },
+    HideProp {
+        id: Uuid,
+    },
     ClearProps,
-    ShowMessage { id: Uuid },
+    ShowMessage {
+        id: Uuid,
+    },
     ClearMessage,
     StopAudio,
 }
@@ -490,7 +508,7 @@ impl Project {
     pub fn paths_mut(&mut self) -> Vec<&mut PathBuf> {
         fn actions<'a>(out: &mut Vec<&'a mut PathBuf>, list: &'a mut [CueAction]) {
             out.extend(list.iter_mut().filter_map(|a| match a {
-                CueAction::PlayDeck { path } => Some(path),
+                CueAction::PlayDeck { path } | CueAction::PlayDeckInLumen { path } => Some(path),
                 _ => None,
             }));
         }
@@ -896,7 +914,7 @@ fn check_transition(transition: &Transition) -> Result<(), CoreError> {
 pub(crate) fn validate_actions(actions: &[CueAction], owner: String) -> Result<(), CoreError> {
     if actions
         .iter()
-        .any(|a| matches!(a, CueAction::PlayDeck { path } if path.as_os_str().is_empty()))
+        .any(|a| matches!(a, CueAction::PlayDeck { path } | CueAction::PlayDeckInLumen { path } if path.as_os_str().is_empty()))
     {
         return Err(CoreError::EmptyPath("deck".into()));
     }

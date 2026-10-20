@@ -3,6 +3,7 @@ mod app;
 mod audio;
 mod books;
 mod brand;
+mod capture;
 mod deck;
 mod displays;
 mod dock;

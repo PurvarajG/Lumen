@@ -817,23 +817,37 @@ fn cue_menu(app: &mut LumenApp, response: egui::Response, document_id: Uuid, sli
         });
     response.context_menu(|ui| {
         if let Some(source) = &source {
-            let app_name = match source
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase()
-                .as_str()
-            {
-                "key" => "Keynote",
-                _ => "PowerPoint",
-            };
-            if ui.button(format!("Play in {app_name} instead")).clicked() {
-                app.apply_actions(&[CueAction::PlayDeck {
-                    path: source.clone(),
-                }]);
-                ui.close();
+            let powerpoint = !matches!(
+                source
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(str::to_ascii_lowercase)
+                    .as_deref(),
+                Some("key")
+            );
+            if powerpoint {
+                if ui.button("Play inside Lumen").clicked() {
+                    app.apply_actions(&[CueAction::PlayDeckInLumen {
+                        path: source.clone(),
+                    }]);
+                    ui.close();
+                }
+                if ui.button("Play in PowerPoint (fullscreen)").clicked() {
+                    app.apply_actions(&[CueAction::PlayDeck {
+                        path: source.clone(),
+                    }]);
+                    ui.close();
+                }
+                ui.label("Keeps animations");
+            } else {
+                if ui.button("Play in Keynote instead").clicked() {
+                    app.apply_actions(&[CueAction::PlayDeck {
+                        path: source.clone(),
+                    }]);
+                    ui.close();
+                }
+                ui.label("Keeps animations; overlays hidden");
             }
-            ui.label("Keeps animations; overlays hidden");
         }
         if let Some(current) = fits.first() {
             // Not a submenu: the arrow glyph is missing from the bundled fonts.

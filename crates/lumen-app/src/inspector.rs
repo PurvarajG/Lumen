@@ -282,6 +282,7 @@ fn action_editor(ui: &mut egui::Ui, a: &mut CueAction, p: &Project) -> bool {
         "Show message",
         "Play deck",
         "Stop deck",
+        "Play deck inside Lumen",
     ];
     let idx = action_index(a);
     let mut selected = idx;
@@ -321,7 +322,7 @@ fn action_editor(ui: &mut egui::Ui, a: &mut CueAction, p: &Project) -> bool {
             changed |= ui.checkbox(v, "On").changed()
         }
         CueAction::StageMessage(s) => changed |= ui.text_edit_singleline(s).changed(),
-        CueAction::PlayDeck { path } => {
+        CueAction::PlayDeck { path } | CueAction::PlayDeckInLumen { path } => {
             let mut text = path.to_string_lossy().into_owned();
             if ui.text_edit_singleline(&mut text).changed() {
                 *path = text.into();
@@ -382,6 +383,7 @@ fn action_index(a: &CueAction) -> usize {
         CueAction::ShowMessage { .. } => 15,
         CueAction::PlayDeck { .. } => 16,
         CueAction::StopDeck => 17,
+        CueAction::PlayDeckInLumen { .. } => 18,
     }
 }
 fn default_action(i: usize, p: &Project) -> CueAction {
@@ -415,6 +417,9 @@ fn default_action(i: usize, p: &Project) -> CueAction {
             id: p.messages.first().map_or_else(Uuid::new_v4, |x| x.id),
         },
         16 => CueAction::PlayDeck {
+            path: Default::default(),
+        },
+        18 => CueAction::PlayDeckInLumen {
             path: Default::default(),
         },
         _ => CueAction::StopDeck,

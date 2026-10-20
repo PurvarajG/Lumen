@@ -17,6 +17,8 @@ use std::{
 use uuid::Uuid;
 
 const MEDIA_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
+/// The capture's own 3 s first-frame limit decides; this only keeps a dead worker from holding the picture.
+const CAPTURE_WAIT: std::time::Duration = std::time::Duration::from_secs(8);
 
 #[derive(Clone, Default)]
 pub struct Published {
@@ -34,6 +36,8 @@ pub struct Published {
     /// Set while the audience window is open: it pulls video frames on its own refresh.
     pub video: Option<lumen_media::FrameSource>,
     pub media_animating: bool,
+    /// Set while a captured deck is up and the audience window pulls its frames.
+    pub capture: Option<crate::capture::Latest>,
 }
 #[derive(Clone, Default)]
 pub struct ProjectView {
@@ -69,6 +73,11 @@ pub struct LumenApp {
     pub status: String,
     pub media: MediaState,
     pub(super) deck: crate::deck::DeckController,
+    /// A PowerPoint deck played in a window that Lumen captures (see `capture.rs`).
+    capture: crate::capture::CaptureController,
+    capture_texture: Option<TextureHandle>,
+    /// A capture problem for the operator, and whether Screen Recording is the cause.
+    capture_notice: Option<(String, bool)>,
     pub show_audience: bool,
     pub show_stage: bool,
     pub fullscreen_audience: bool,
@@ -192,6 +201,9 @@ impl LumenApp {
             status: "Ready".into(),
             media,
             deck: crate::deck::DeckController::new(),
+            capture: crate::capture::CaptureController::new(),
+            capture_texture: None,
+            capture_notice: None,
             show_audience: smoke,
             show_stage: smoke,
             fullscreen_audience: settings.audience_fullscreen,
@@ -340,8 +352,8 @@ impl LumenApp {
         &mut self,
         f: impl FnOnce(&mut Runtime, &Project) -> Result<bool, lumen_core::CoreError>,
     ) {
-        let previous = self.runtime.output.clone();
-        let previous_media = self.media.image_texture.clone();
+        let previous = self.shown_output();
+        let previous_media = self.live_texture();
         match f(&mut self.runtime, &self.project) {
             Ok(false) => {}
             Ok(true) => {
@@ -381,6 +393,7 @@ impl LumenApp {
             Some((doc, slide))
                 if armed != next
                     && self.runtime.output.deck.is_none()
+                    && self.capture_route() == crate::capture::Route::Cues
                     && !crate::books::has_preview(self) =>
             {
                 self.trigger(doc, slide)
@@ -472,7 +485,7 @@ impl LumenApp {
             project: ProjectView {
                 next: self.runtime.peek_next(&self.project),
             },
-            output: self.runtime.output.clone(),
+            output: self.shown_output(),
             runtime: RuntimeView {
                 timers: self
                     .project
@@ -493,7 +506,7 @@ impl LumenApp {
                     .collect(),
                 message: self.runtime.output.stage_message.clone(),
             },
-            media: self.media.image_texture.clone(),
+            media: self.live_texture(),
             video: self
                 .media
                 .player
@@ -505,6 +518,8 @@ impl LumenApp {
                 .player
                 .as_ref()
                 .is_some_and(|player| !player.is_finished() && !player.is_paused()),
+            capture: (self.capture.is_live() && self.audience_open())
+                .then(|| self.capture.latest()),
         };
         if let Ok(mut p) = self.published.lock() {
             *p = view;
@@ -1154,6 +1169,7 @@ impl eframe::App for LumenApp {
             t.start();
         }
         self.sync_deck();
+        self.update_capture(ctx);
         while let Some(result) = self.deck.poll() {
             if let Err(error) = result {
                 self.runtime.output.deck = None;
@@ -1211,6 +1227,7 @@ impl eframe::App for LumenApp {
         self.shortcuts(ctx);
         self.recovery_banner(ctx);
         self.missing_media_banner(ctx);
+        self.capture_banner(ctx);
         self.toolbar(ctx);
         egui::TopBottomPanel::bottom("status")
             .exact_height(26.0)
@@ -1295,7 +1312,7 @@ impl eframe::App for LumenApp {
             .player
             .as_ref()
             .is_some_and(|p| !p.is_finished() && !p.is_paused());
-        let animating = self.transition.is_some() || video_playing;
+        let animating = self.transition.is_some() || video_playing || self.capture.is_live();
         if animating && !self.audience_open() {
             ctx.request_repaint();
         } else if animating {
@@ -1309,6 +1326,7 @@ impl eframe::App for LumenApp {
             .values()
             .any(|timer| timer.running)
             || self.runtime.output.deck.is_some()
+            || self.capture.is_wanted()
             || self.media.pending
             || self.show_stage
             || self.runtime.output.message.is_some()
@@ -1322,6 +1340,7 @@ impl eframe::App for LumenApp {
         self.remove_clean_recovery();
         self.audio.stop();
         self.deck.reconcile(None);
+        self.capture.shutdown();
         self.media.shutdown();
     }
 }
@@ -1843,7 +1862,16 @@ impl LumenApp {
                     {
                         crate::media::upload(texture, frame);
                     }
-                    if state.media_animating || state.transition.is_some() {
+                    if let Some(latest) = &state.capture
+                        && let Some(texture) = state.media.as_mut()
+                        && let Some(frame) = latest.take()
+                    {
+                        crate::media::upload(texture, frame);
+                    }
+                    if state.media_animating
+                        || state.capture.is_some()
+                        || state.transition.is_some()
+                    {
                         ctx.request_repaint();
                     } else if state.output.message.is_some() {
                         ctx.request_repaint_after(std::time::Duration::from_millis(80));
@@ -2136,19 +2164,152 @@ impl LumenApp {
     fn audience_open(&self) -> bool {
         self.show_audience && self.runtime.output.deck.is_none()
     }
+    /// The texture behind the live picture: the captured deck's frame, else the video or still.
+    fn live_texture(&self) -> Option<TextureHandle> {
+        if self.runtime.output.deck_capture.is_some() {
+            self.capture_texture.clone()
+        } else {
+            self.media.image_texture.clone()
+        }
+    }
+    /// The output as the outputs draw it: a captured deck counts only once its picture has been up,
+    /// so the slide's own background shows while PowerPoint opens its show.
+    fn shown_output(&self) -> OutputState {
+        let mut output = self.runtime.output.clone();
+        if !self.capture.has_shown() {
+            output.deck_capture = None;
+        }
+        output
+    }
+    fn capture_route(&self) -> crate::capture::Route {
+        crate::capture::route(
+            self.runtime.output.deck_capture.is_some(),
+            self.capture.is_live(),
+            self.capture.is_starting(),
+        )
+    }
+    /// Starts, stops and feeds the captured PowerPoint deck to match the live output.
+    fn update_capture(&mut self, ctx: &Context) {
+        let wanted = self.runtime.output.deck_capture.clone();
+        let target = self
+            .audience_target
+            .as_ref()
+            .or_else(|| self.displays.iter().find(|d| d.primary));
+        let placement = target.map_or(
+            crate::capture::Placement {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            },
+            |d| crate::capture::Placement {
+                x: d.x,
+                y: d.y,
+                // shortcut: capped at 2560x1440; the per-frame copy and upload at 4K cost about
+                // 58% of a core in the release build. Raise it once frames are copied less.
+                width: d.key.width.min(2560),
+                height: d.key.width.min(2560) * 9 / 16,
+            },
+        );
+        self.capture.reconcile(wanted.clone(), placement);
+        if wanted.is_some() && self.capture_texture.is_none() {
+            self.capture_texture = Some(ctx.load_texture(
+                "lumen-deck",
+                egui::ColorImage::filled([2, 2], egui::Color32::BLACK),
+                egui::TextureOptions::LINEAR,
+            ));
+        }
+        while let Some(event) = self.capture.poll() {
+            match event {
+                crate::capture::Event::Started(_) => {
+                    // The first frame goes up before the output switches to it.
+                    self.pull_capture_frame();
+                    self.status = "PowerPoint is playing inside Lumen".into();
+                }
+                crate::capture::Event::Failed(path, reason, message) => {
+                    self.capture_fallback(path, reason, &message)
+                }
+                crate::capture::Event::Ended(_, why) => {
+                    self.error = format!("{why}. The last picture stays up; Next moves on.");
+                }
+            }
+        }
+        if self.capture.is_live() && !self.audience_open() {
+            self.pull_capture_frame();
+        }
+    }
+    fn pull_capture_frame(&mut self) {
+        if let (Some(frame), Some(texture)) =
+            (self.capture.latest().take(), self.capture_texture.as_mut())
+        {
+            crate::media::upload(texture, frame);
+        }
+    }
+    /// Never a black audience: the deck plays fullscreen in PowerPoint instead, with the reason.
+    fn capture_fallback(
+        &mut self,
+        path: PathBuf,
+        reason: crate::capture::FailReason,
+        message: &str,
+    ) {
+        use crate::capture::FailReason;
+        self.capture_notice = Some(match reason {
+            FailReason::NoPermission => (
+                "Lumen needs Screen Recording permission to play PowerPoint inside Lumen. Playing fullscreen in PowerPoint instead.".into(),
+                true,
+            ),
+            FailReason::NoPowerPoint => (
+                "PowerPoint is not installed. Trying fullscreen playback instead.".into(),
+                false,
+            ),
+            FailReason::Other => (
+                format!("PowerPoint could not play inside Lumen ({message}). Playing fullscreen in PowerPoint instead."),
+                false,
+            ),
+        });
+        self.apply_actions(&[lumen_core::CueAction::PlayDeck { path }]);
+    }
+    fn capture_banner(&mut self, ctx: &Context) {
+        let Some((text, privacy)) = self.capture_notice.clone() else {
+            return;
+        };
+        let (mut open, mut dismiss) = (false, false);
+        egui::TopBottomPanel::top("capture-banner").show(ctx, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.colored_label(crate::style::WARN, text);
+                open = privacy && ui.button("Open Privacy settings").clicked();
+                dismiss = ui.button("Dismiss").clicked();
+            });
+        });
+        if open {
+            let _ = std::process::Command::new("/usr/bin/open")
+                .arg(
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+                )
+                .spawn();
+        }
+        if open || dismiss {
+            self.capture_notice = None;
+        }
+    }
     fn sync_deck(&mut self) {
         self.deck.reconcile(self.runtime.output.deck.clone());
     }
     /// Starts the fade once the new media has a frame, or after 1.5 s so a bad file can't freeze the picture.
     fn release_media_wait(&mut self) {
+        let capturing = self.runtime.output.deck_capture.is_some() && !self.capture.is_live();
         let ready = !self.media.pending
+            && !capturing
             && self
                 .media
                 .player
                 .as_ref()
                 .is_none_or(|p| p.frames().has_frame());
+        // PowerPoint needs a few seconds to open its show; a failed start releases the wait at once.
+        let limit = if capturing { CAPTURE_WAIT } else { MEDIA_WAIT };
         if let Some(t) = self.transition.as_mut().filter(|t| t.waiting_for_media)
-            && (ready || t.created.elapsed() >= MEDIA_WAIT)
+            && (ready
+                || (t.created.elapsed() >= limit && !(capturing && self.capture.is_starting())))
         {
             t.created = Instant::now();
             t.started = Default::default();
@@ -2159,15 +2320,16 @@ impl LumenApp {
     fn live_media_will_load(&self) -> bool {
         let output = &self.runtime.output;
         let background = output.effective_background();
-        !output.media_cleared
-            && matches!(
-                background,
-                Some(Background::Video { .. } | Background::Image { .. })
-            )
-            && (self.media.pending
-                || self.media.image_texture.is_none()
-                || self.media.background_requires_reload(background)
-                || self.media.restart_on_trigger(background))
+        (output.deck_capture.is_some() && !self.capture.is_live())
+            || !output.media_cleared
+                && matches!(
+                    background,
+                    Some(Background::Video { .. } | Background::Image { .. })
+                )
+                && (self.media.pending
+                    || self.media.image_texture.is_none()
+                    || self.media.background_requires_reload(background)
+                    || self.media.restart_on_trigger(background))
     }
     fn after_trigger(&mut self, previous: OutputState, previous_media: Option<TextureHandle>) {
         if self.runtime.output.live.as_ref().is_some_and(|l| {
@@ -2202,8 +2364,13 @@ impl LumenApp {
             self.deck.navigate(forward);
             return;
         }
-        let previous = self.runtime.output.clone();
-        let media = self.media.image_texture.clone();
+        match self.capture_route() {
+            crate::capture::Route::Deck => return self.capture.navigate(forward),
+            crate::capture::Route::Hold => return,
+            crate::capture::Route::Cues => {}
+        }
+        let previous = self.shown_output();
+        let media = self.live_texture();
         let result = if forward {
             self.runtime.next(&self.project)
         } else {
@@ -2252,8 +2419,8 @@ impl LumenApp {
             5 => CueAction::ClearAudio,
             _ => CueAction::ClearMessages,
         };
-        let previous = self.runtime.output.clone();
-        let previous_media = self.media.image_texture.clone();
+        let previous = self.shown_output();
+        let previous_media = self.live_texture();
         self.apply_actions(&[action]);
         let kind = self.project.transition.clone();
         self.transition = (transition_millis(&kind) > 0)
@@ -2321,11 +2488,11 @@ impl LumenApp {
         crate::render::paint_audience(
             ui,
             rect,
-            &self.runtime.output,
+            &self.shown_output(),
             &self.project,
             &self.runtime,
             self.seconds_of_day(),
-            self.media.image_texture.as_ref(),
+            self.live_texture().as_ref(),
             self.transition.as_ref(),
             &self.output_images(),
         );

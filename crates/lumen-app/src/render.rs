@@ -70,6 +70,8 @@ struct Scene<'a> {
     background: Option<&'a Background>,
     empty_color: Color32,
     media: Option<&'a TextureHandle>,
+    /// A captured PowerPoint deck is playing; `media` holds its latest frame.
+    captured: bool,
     images: &'a HashMap<PathBuf, TextureHandle>,
 }
 
@@ -225,6 +227,13 @@ fn paint_background(ui: &egui::Ui, canvas: Rect, scene: &Scene<'_>, clip_rect: R
         _ => scene.empty_color,
     };
     painter.rect_filled(canvas, 0.0, background);
+    if scene.captured {
+        if let Some(texture) = scene.media {
+            let (rect, uv) = media_rect_uv(texture.size_vec2(), canvas, MediaFit::Fit);
+            painter.image(texture.id(), rect, uv, crate::style::WHITE);
+        }
+        return;
+    }
     let pdf = if let Some(Background::Pdf { path, page }) = scene.background {
         crate::pdf::texture(ui, path, *page, canvas)
     } else {
@@ -504,6 +513,7 @@ fn paint_transition_layers(
         background: previous.effective_background(),
         empty_color: crate::style::BLACK,
         media: previous_media,
+        captured: previous.deck_capture.is_some(),
         images,
     };
     let next_scene = Scene {
@@ -514,6 +524,7 @@ fn paint_transition_layers(
         background: next.effective_background(),
         empty_color: crate::style::BLACK,
         media,
+        captured: next.deck_capture.is_some(),
         images,
     };
     painter(ui, rect, 1.0).rect_filled(rect, 0.0, crate::style::BLACK);
@@ -522,6 +533,7 @@ fn paint_transition_layers(
         && !next.blackout
         && previous.media_cleared == next.media_cleared
         && previous.effective_background() == next.effective_background()
+        && previous.deck_capture == next.deck_capture
     {
         paint_background(ui, canvas, &next_scene, rect, 1.0);
         let (old_alpha, new_alpha, old_offset, new_offset) = transition_frame(kind, t);
@@ -627,6 +639,7 @@ pub fn paint_audience(
             background: output.effective_background(),
             empty_color: crate::style::BLACK,
             media,
+            captured: output.deck_capture.is_some(),
             images,
         };
         paint_scene(ui, rect, &scene, rect, 1.0, true);
@@ -700,6 +713,7 @@ pub fn paint_preview(
         background: live.map(|l| &l.slide.background),
         empty_color: crate::style::CANVAS,
         media,
+        captured: false,
         images,
     };
     paint_scene(ui, rect, &scene, rect, 1.0, true);
@@ -727,6 +741,7 @@ pub fn preview_frame_with_images(
         background: live.map(|l| &l.slide.background),
         empty_color: crate::style::CANVAS,
         media,
+        captured: false,
         images,
     };
     paint_scene(ui, rect, &scene, rect, 1.0, true);
