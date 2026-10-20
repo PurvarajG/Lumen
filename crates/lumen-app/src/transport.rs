@@ -118,7 +118,7 @@ fn row(ui: &mut Ui, id: &str, np: &NowPlaying, volume: bool) -> (bool, bool, Opt
                 egui::ProgressBar::new(fraction)
                     .desired_width(ui.available_width())
                     .desired_height(4.0)
-                    .corner_radius(2)
+                    .corner_radius(style::RADIUS)
                     .fill(fill),
             );
         }

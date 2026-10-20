@@ -146,7 +146,7 @@ fn empty_running_order(app: &mut LumenApp, ui: &mut egui::Ui) {
     };
     egui::Frame::new()
         .stroke(stroke)
-        .corner_radius(6.0)
+        .corner_radius(style::RADIUS_SURFACE)
         .inner_margin(16.0)
         .show(ui, |ui| {
             ui.set_min_size(Vec2::new(ui.available_width(), height - 32.0));
@@ -234,20 +234,15 @@ fn document_rows(
                     if scroll_to_armed && selected && (!reorder || armed_row == Some(index)) {
                         r.scroll_to_me(Some(egui::Align::Center));
                     }
-                    if selected {
+                    if selected || r.hovered() || r.dragged() {
                         ui.painter()
-                            .rect_filled(rect, 3.0, style::SAFFRON.gamma_multiply(0.15));
-                    } else if r.hovered() || r.dragged() {
-                        ui.painter().rect_filled(rect, 3.0, style::RAISED);
+                            .rect_filled(rect, style::RADIUS_SURFACE, style::RAISED);
                     }
-                    if selected || r.has_focus() {
+                    if r.has_focus() {
                         ui.painter().rect_stroke(
                             rect,
-                            3.0,
-                            egui::Stroke::new(
-                                if r.has_focus() { 2.0_f32 } else { 1.0_f32 },
-                                style::SAFFRON,
-                            ),
+                            style::RADIUS_SURFACE,
+                            egui::Stroke::new(2.0_f32, style::SAFFRON),
                             egui::StrokeKind::Inside,
                         );
                     }
@@ -337,7 +332,8 @@ fn document_rows(
                             egui::pos2(text_x + 22.0, line - 8.0),
                             Vec2::new(38.0, 16.0),
                         );
-                        ui.painter().rect_filled(pill, 8.0, style::LIVE);
+                        ui.painter()
+                            .rect_filled(pill, style::RADIUS_SURFACE, style::LIVE);
                         ui.painter().text(
                             pill.center(),
                             egui::Align2::CENTER_CENTER,
@@ -504,7 +500,12 @@ pub fn preview(app: &mut LumenApp, ui: &mut egui::Ui) {
             .as_ref()
             .zip(next.as_ref())
             .is_some_and(|(p, n)| (p.document_id, p.slide.id) == (n.document_id, n.slide.id));
-    ui.heading(if up_next { "Up next" } else { "Preview" });
+    if up_next {
+        ui.colored_label(
+            style::SAFFRON,
+            RichText::new("Up next").size(style::CAPTION),
+        );
+    }
     let height = preview_pane_height(ui.available_width(), ui.available_height());
     // One snapshot per call; cloning the map per tile was O(tiles x thumbnails).
     let images = app.thumbnails.images();
@@ -829,9 +830,6 @@ fn cue_menu(app: &mut LumenApp, response: egui::Response, document_id: Uuid, sli
         }
         if let Some(current) = fits.first() {
             // Not a submenu: the arrow glyph is missing from the bundled fonts.
-            if source.is_some() {
-                ui.separator();
-            }
             ui.label(
                 RichText::new("Scale")
                     .size(style::CAPTION)
@@ -888,7 +886,13 @@ pub fn live(app: &mut LumenApp, ui: &mut egui::Ui) {
 }
 
 fn live_body(app: &mut LumenApp, ui: &mut egui::Ui, pane_height: f32) {
-    ui.colored_label(style::LIVE, RichText::new("LIVE").strong());
+    egui::Frame::new()
+        .fill(style::LIVE)
+        .corner_radius(style::RADIUS_SURFACE)
+        .inner_margin(egui::Margin::symmetric(8, 2))
+        .show(ui, |ui| {
+            ui.label(RichText::new("LIVE").strong().color(style::WHITE));
+        });
     let width = ui.available_width();
     // A wide pane must not push the transport row out of sight.
     let height = (width * 9.0 / 16.0).min(pane_height * 0.55);
