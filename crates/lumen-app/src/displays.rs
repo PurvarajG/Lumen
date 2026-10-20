@@ -267,6 +267,10 @@ mod macos {
         fn CGDisplayBounds(display: DisplayId) -> Rect;
         fn CGDisplayPixelsWide(display: DisplayId) -> usize;
         fn CGDisplayPixelsHigh(display: DisplayId) -> usize;
+        fn CGDisplayCopyDisplayMode(display: DisplayId) -> *mut AnyObject;
+        fn CGDisplayModeGetPixelWidth(mode: *mut AnyObject) -> usize;
+        fn CGDisplayModeGetPixelHeight(mode: *mut AnyObject) -> usize;
+        fn CGDisplayModeRelease(mode: *mut AnyObject);
         fn CGDisplayCreateUUIDFromDisplayID(display: DisplayId) -> *mut AnyObject;
     }
 
@@ -274,6 +278,25 @@ mod macos {
     unsafe extern "C" {
         fn CFUUIDCreateString(allocator: *const AnyObject, uuid: *mut AnyObject) -> *mut AnyObject;
         fn CFRelease(object: *mut AnyObject);
+    }
+
+    /// Panel pixels of the current mode; `CGDisplayPixelsWide/High` give points on a HiDPI display.
+    fn pixel_size(id: DisplayId) -> (u32, u32) {
+        unsafe {
+            let mode = CGDisplayCopyDisplayMode(id);
+            if mode.is_null() {
+                return (
+                    CGDisplayPixelsWide(id) as u32,
+                    CGDisplayPixelsHigh(id) as u32,
+                );
+            }
+            let size = (
+                CGDisplayModeGetPixelWidth(mode) as u32,
+                CGDisplayModeGetPixelHeight(mode) as u32,
+            );
+            CGDisplayModeRelease(mode);
+            size
+        }
     }
 
     /// The display's ColorSync UUID as text, `None` if macOS has none for it.
@@ -317,11 +340,12 @@ mod macos {
                     .get(&id)
                     .cloned()
                     .unwrap_or_else(|| format!("Display {id}"));
+                let (width, height) = pixel_size(id);
                 DisplayInfo {
                     key: DisplayKey {
                         name,
-                        width: unsafe { CGDisplayPixelsWide(id) } as u32,
-                        height: unsafe { CGDisplayPixelsHigh(id) } as u32,
+                        width,
+                        height,
                         uuid: display_uuid(id),
                     },
                     x: bounds.origin.x.round() as i32,
