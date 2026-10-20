@@ -8,7 +8,7 @@ Full ProPresenter parity is a long-term goal; see [the parity tracker](docs/PARI
 
 ## Download
 
-**[Download Lumen Presenter 1.0.0-rc.6 for Mac (DMG)](https://github.com/PurvarajG/Lumen/releases/download/v1.0.0-rc.6/Lumen-Presenter-1.0.0-rc.6-macos-arm64.dmg)** · [all versions and release notes](https://github.com/PurvarajG/Lumen/releases)
+**[Download Lumen Presenter 1.0.0-rc.7 for Mac (DMG)](https://github.com/PurvarajG/Lumen/releases/download/v1.0.0-rc.7/Lumen-Presenter-1.0.0-rc.7-macos-arm64.dmg)** · [all versions and release notes](https://github.com/PurvarajG/Lumen/releases)
 
 - Needs a Mac with Apple Silicon (M1 or newer) running macOS 12 or later.
 - Video needs FFmpeg: `brew install ffmpeg`.
@@ -41,7 +41,7 @@ Photos and videos that are not 16:9 show with bars by default. Right-click a cue
 **File → Save with media…** copies every photo, video, sound and deck the show uses into a new folder (`<Name>/<Name>.lumen.json` plus `Media/`), and the show then refers to them by relative paths, so the whole folder can be copied, zipped or reused for a later service. If a show opens with files missing, a banner offers **Locate folder…**, which relinks them by file name. **File → Open recent** lists earlier shows, and Lumen reopens the last one at launch.
 
 ### Output windows
-- **Audience:** clean fullscreen or windowed output for projectors and TVs. If the chosen display comes back at a different resolution (an LED processor changing its input mode) or after a cable drop, the window returns to it by itself. For an LED wall fed through a processor, set the processor to take a 16:9 input at its native resolution (1920×1080 or 3840×2160) at 60 Hz (50 Hz for 25 fps content), full-range RGB.
+- **Audience:** clean fullscreen or windowed output for projectors and TVs. If the chosen display comes back at a different resolution (an LED processor changing its input mode) or after a cable drop, the window returns to it by itself. Two identical monitors (for example two "LG ULTRAFINE") are told apart by macOS's own display ID, so Audience and Stage stay on the screens you chose after a restart or replug; **Outputs → Identify** shows which is which. For an LED wall fed through a processor, set the processor to take a 16:9 input at its native resolution (1920×1080 or 3840×2160) at 60 Hz (50 Hz for 25 fps content), full-range RGB.
 - **Stage:** a confidence monitor with the current slide, the next slide, notes, clocks and urgent messages.
 
 ---

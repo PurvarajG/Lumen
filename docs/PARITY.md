@@ -18,10 +18,10 @@ States: **Verified** = exercised through automated tests or native UI checks; **
 | ProPresenter native document import | Implemented, experimental, text only | `lumen-interchange` extracts cue order and plain text (Unicode, escapes) from the observed ProPresenter 21.4 path; verified on two owned fixtures; formatting, media, layout and actions are not imported |
 | OpenLyrics interchange | Verified | `lumen-interchange` OpenLyrics XML import & export with namespace, verse order, line break roundtripping, and malformed document handling tests |
 | Layered slide objects / rich text | Implemented | `SlideObject` model, inline rich-text markup spans (bold, italic, underline, color), and `cosmic-text` decoration rendering |
-| Transitions | Implemented | Cut, Dissolve, FadeBlack, and Push transitions modeled with duration validation and live snapshot state |
+| Transitions | Verified on 60 Hz output | Cut, Dissolve, FadeBlack, and Push; fades start on the first audience frame and unchanged objects stay at full opacity; 97-100 % of fade pictures held exactly one refresh on a 60 Hz LG with a 120 Hz console (Wave H2) |
 | Undo/redo and crash recovery | Implemented | `lumen-core` Command history stack with undo/redo and `lumen-app` autosave snapshot / recovery guard |
 | Countdown to time / count-up / overrun | Implemented | `TimerKind` supports Countdown, CountdownToTime, and Elapsed; overrun tracking and warning thresholds validated in core tests |
-| Multiple output layouts and monitor mapping | Implemented UI & display enumeration | Display discovery, display assignment, and stage layouts implemented in app; physical multi-monitor hardware validation pending |
+| Multiple output layouts and monitor mapping | Implemented UI & display enumeration | Display discovery, display assignment, and stage layouts implemented in app; verified on a built-in display plus two identical 4K LG monitors, told apart by display UUID (Wave H2) |
 | NDI, SDI and Syphon output | Planned | Adapter availability, SDK packaging, and hardware receiver verification |
 | Video input, recording and streaming | Planned | Real capture/encode pipeline tests and audio sync measurement |
 | Audio routing and strict A/V sync | Implemented audio bin & playback | Pure-Rust `rodio` audio playback with volume fading, sine wave completion test, and device enumeration; sample-accurate multi-channel matrix unverified |
@@ -32,7 +32,7 @@ States: **Verified** = exercised through automated tests or native UI checks; **
 | Scripture / licensed content services | Planned | User-supplied or licensed sources and import verification; offline anirdesh scriptures implemented independently |
 | Cloud/team synchronization | Planned | Conflict/persistence/offline/recovery design and tests |
 | PDF slides | Verified | CoreGraphics vector rendering at output pixel size (tests for crop/rotation/aspect); native preview/live/thumbnail capture of a 2-page PDF |
-| PowerPoint / Keynote playback | Verified with PowerPoint 16.114; Keynote untested | Launch Services open + osascript control with argv-only paths; native run: Play cue started the slideshow, Lumen Next/Previous moved slides 1→2→1, F2 stopped it |
+| PowerPoint / Keynote playback | Verified with PowerPoint 16.114; Keynote untested | Launch Services open + osascript control with argv-only paths; native run: Play cue started the slideshow, Lumen Next/Previous moved slides 1→2→1, F2 stopped it. "Play inside Lumen" captures PowerPoint's windowed show into the audience output (ScreenCaptureKit, macOS 13+) with fullscreen fallback (Wave H2) |
 | Packaged signed releases / other OSs | Verified macOS release DMG | `scripts/package-macos.sh` builds optimized 1.0.0-rc.3 release bundle, original AppIcon.icns, licenses, and compressed UDZO DMG verified with hdiutil and codesign; notarization and Windows/Linux unverified |
 
 Research findings and their limitations are in `docs/research`. Detailed staged architecture is in `docs/superpowers/specs/2026-10-16-lumen-design.md`.

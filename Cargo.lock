@@ -2198,7 +2198,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lumen-app"
-version = "1.0.0-rc.6"
+version = "1.0.0-rc.7"
 dependencies = [
  "block2 0.6.2",
  "chrono",
@@ -2230,7 +2230,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-control"
-version = "1.0.0-rc.6"
+version = "1.0.0-rc.7"
 dependencies = [
  "midir",
  "rosc",
@@ -2243,7 +2243,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-core"
-version = "1.0.0-rc.6"
+version = "1.0.0-rc.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -2255,7 +2255,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-interchange"
-version = "1.0.0-rc.6"
+version = "1.0.0-rc.7"
 dependencies = [
  "lumen-core",
  "roxmltree",
@@ -2267,7 +2267,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-library"
-version = "1.0.0-rc.6"
+version = "1.0.0-rc.7"
 dependencies = [
  "lumen-core",
  "scraper",
@@ -2281,7 +2281,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-media"
-version = "1.0.0-rc.6"
+version = "1.0.0-rc.7"
 dependencies = [
  "libc",
  "rodio",
@@ -2291,7 +2291,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-text"
-version = "1.0.0-rc.6"
+version = "1.0.0-rc.7"
 dependencies = [
  "cosmic-text",
  "image",

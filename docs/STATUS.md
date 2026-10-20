@@ -259,3 +259,8 @@ Plan: `docs/superpowers/plans/2026-10-20-wave-h2.md`. Done on `development` by o
 ### H2.6 verification
 - `cargo fmt --all -- --check`; `cargo test --workspace` **310 passed, 0 failed, 5 ignored**; `cargo clippy --workspace --all-targets -- -D warnings` clean. Native `--smoke-test` exits 0.
 - For the user to check by hand: (1) **twin monitors:** pick the monitor you want as Audience under Outputs, quit, relaunch, press Identify and confirm the audience comes back on the same physical screen, also after unplugging and replugging a cable; (2) **the fades show** (`.local/qa/h2/fades.lumen.json`, 120 Hz built-in console, stage open) and say whether it looks smooth; (3) **an animated deck in rehearsal:** right-click a deck slide → Play inside Lumen, step all builds with the clicker, leave with another cue, and try Play inside Lumen once with Screen Recording switched off for Lumen's host app to see the fallback banner.
+
+### rc.7 (2026-10-20)
+- Version 1.0.0-rc.7 with Waves H1 and H2. `ALLOW_MISSING_BOOKS="yogi-gita karika aksharamrutam" scripts/package-macos.sh --release` → `.local/dist/Lumen-Presenter-1.0.0-rc.7-macos-arm64.dmg`, 20 MB, `hdiutil verify` valid; mounted: `codesign --verify --deep --strict` passes, Info.plist 1.0.0-rc.7, 12 books, licences present, bundled binary passes `--smoke-test`. SHA-256 `e923dfc5e307b17f46bb78d0764a1e2c183fe6b445f7aa1acd6ba5f9bfae3c73`.
+- Published as GitHub pre-release `v1.0.0-rc.7` from `main`; README Download link points to it.
+- The hand checks listed under H2.6 are still open.
