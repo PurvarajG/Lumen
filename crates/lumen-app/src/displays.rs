@@ -27,7 +27,7 @@ pub struct DisplayInfo {
 impl DisplayInfo {
     pub fn label(&self) -> String {
         format!(
-            "{} — {} × {}",
+            "{}, {} × {}",
             self.key.name, self.key.width, self.key.height
         )
     }
@@ -125,20 +125,14 @@ pub fn outputs_panel(
                     .unwrap_or(0)
             })
             .unwrap_or(0);
-        egui::ComboBox::from_id_salt(("display", name))
-            .selected_text(displays[selected_index].label())
-            .show_ui(ui, |ui| {
-                for (index, display) in displays.iter().enumerate() {
-                    if ui
-                        .selectable_label(index == selected_index, display.label())
-                        .clicked()
-                        && saved.as_ref() != Some(&display.key)
-                    {
-                        *saved = Some(display.key.clone());
-                        action.changed = true;
-                    }
-                }
-            });
+        for (index, display) in displays.iter().enumerate() {
+            if ui.radio(index == selected_index, display.label()).clicked()
+                && saved.as_ref() != Some(&display.key)
+            {
+                *saved = Some(display.key.clone());
+                action.changed = true;
+            }
+        }
         if ui.checkbox(fullscreen, "Fullscreen").changed() {
             action.changed = true;
         }

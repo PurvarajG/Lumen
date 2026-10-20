@@ -1641,7 +1641,11 @@ impl LumenApp {
                     if ui.button("Settings").clicked() {
                         self.show_settings = !self.show_settings;
                     }
-                    ui.menu_button("Outputs", |ui| {
+                    egui::containers::menu::MenuButton::new("Outputs")
+                        .config(egui::containers::menu::MenuConfig::new().close_behavior(
+                            egui::PopupCloseBehavior::CloseOnClickOutside,
+                        ))
+                        .ui(ui, |ui| {
                         self.displays = crate::displays::enumerate_displays();
                         let action =
                             crate::displays::outputs_panel(ui, &mut self.settings, &self.displays);
@@ -1658,7 +1662,7 @@ impl LumenApp {
                             self.identify_until =
                                 Some(Instant::now() + std::time::Duration::from_secs(3));
                         }
-                    });
+                        });
                     if ui.button("Shortcuts").clicked() {
                         self.show_help = !self.show_help;
                     }
