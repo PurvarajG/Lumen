@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     path::PathBuf,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -15,18 +16,46 @@ use lumen_core::{
 pub struct OutputTransition {
     pub previous: OutputState,
     pub previous_media: Option<TextureHandle>,
-    pub started: Instant,
+    /// When the cue fired, or when its media became ready; the fallback if no window paints it.
+    pub created: Instant,
+    /// Set by the first window that paints the transition, so a slow first frame (texture upload,
+    /// text layout) cannot eat into the fade. Clones share it, so the audience's start is the
+    /// console preview's start too.
+    pub started: Arc<OnceLock<Instant>>,
     pub kind: Transition,
     /// Holds the previous picture (progress 0) until the new media has a frame.
     pub waiting_for_media: bool,
 }
 
 impl OutputTransition {
+    pub fn new(
+        previous: OutputState,
+        previous_media: Option<TextureHandle>,
+        kind: Transition,
+        waiting_for_media: bool,
+    ) -> Self {
+        Self {
+            previous,
+            previous_media,
+            created: Instant::now(),
+            started: Arc::default(),
+            kind,
+            waiting_for_media,
+        }
+    }
+    /// Starts the clock if no window has yet; later calls change nothing.
+    pub fn start(&self) {
+        self.started.get_or_init(Instant::now);
+    }
     pub fn progress(&self) -> f32 {
         if self.waiting_for_media {
             return 0.0;
         }
-        transition_progress(transition_millis(&self.kind), self.started.elapsed())
+        let millis = transition_millis(&self.kind);
+        match self.started.get() {
+            Some(started) => transition_progress(millis, started.elapsed()),
+            None => transition_progress(millis, Duration::ZERO),
+        }
     }
     pub fn is_active(&self) -> bool {
         self.waiting_for_media || self.progress() < 1.0
@@ -186,7 +215,7 @@ fn paint_scene(
         return;
     };
     paint_background(ui, canvas, scene, clip_rect, opacity);
-    paint_slide_layer(ui, canvas, live, scene, clip_rect, opacity);
+    paint_slide_layer(ui, canvas, live, scene, clip_rect, opacity, Common::None);
 }
 
 fn paint_background(ui: &egui::Ui, canvas: Rect, scene: &Scene<'_>, clip_rect: Rect, opacity: f32) {
@@ -256,6 +285,86 @@ fn bottom_gradient(canvas: Rect, text_rect: &lumen_core::Rect) -> egui::Mesh {
     mesh
 }
 
+/// How one layer of a crossfade treats the caption and objects that look the same on the other
+/// slide: the incoming layer paints them once at full opacity and the outgoing one skips them,
+/// so unchanged text does not dim and come back.
+#[derive(Clone, Copy)]
+enum Common<'a> {
+    None,
+    Skip(&'a LiveSlide),
+    Own(&'a LiveSlide),
+}
+
+impl Common<'_> {
+    /// Opacity to paint an element at, or `None` to leave it to the other layer.
+    fn opacity(self, unchanged: impl Fn(&LiveSlide) -> bool, opacity: f32) -> Option<f32> {
+        let shown = Some(opacity).filter(|o| *o > 0.0);
+        match self {
+            Common::Skip(other) if unchanged(other) => None,
+            Common::Own(other) if unchanged(other) => Some(1.0),
+            _ => shown,
+        }
+    }
+}
+
+fn same_caption(a: &LiveSlide, b: &LiveSlide) -> bool {
+    let (x, y) = (&a.theme, &b.theme);
+    a.slide.text == b.slide.text
+        && a.slide.text_rect == b.slide.text_rect
+        && a.slide.text_style == b.slide.text_style
+        && x.font_size == y.font_size
+        && x.text_color == y.text_color
+        && x.align == y.align
+        && x.vertical_align == y.vertical_align
+        && x.backdrop == y.backdrop
+}
+
+/// Same picture on screen; the object ids differ between two slides.
+fn same_look(a: &SlideObject, b: &SlideObject) -> bool {
+    use SlideObject::{Image, Shape, Text};
+    match (a, b) {
+        (
+            Text {
+                rect: r1,
+                text: t1,
+                style: s1,
+                align: a1,
+                ..
+            },
+            Text {
+                rect: r2,
+                text: t2,
+                style: s2,
+                align: a2,
+                ..
+            },
+        ) => r1 == r2 && t1 == t2 && s1 == s2 && a1 == a2,
+        (
+            Image {
+                rect: r1, path: p1, ..
+            },
+            Image {
+                rect: r2, path: p2, ..
+            },
+        ) => r1 == r2 && p1 == p2,
+        (
+            Shape {
+                rect: r1,
+                color: c1,
+                corner_radius: k1,
+                ..
+            },
+            Shape {
+                rect: r2,
+                color: c2,
+                corner_radius: k2,
+                ..
+            },
+        ) => r1 == r2 && c1 == c2 && k1 == k2,
+        _ => false,
+    }
+}
+
 fn paint_slide_layer(
     ui: &egui::Ui,
     canvas: Rect,
@@ -263,8 +372,11 @@ fn paint_slide_layer(
     scene: &Scene<'_>,
     clip_rect: Rect,
     opacity: f32,
+    common: Common<'_>,
 ) {
-    if !scene.clear_text {
+    if !scene.clear_text
+        && let Some(opacity) = common.opacity(|other| same_caption(live, other), opacity)
+    {
         if live.theme.backdrop == Backdrop::BottomGradient {
             painter(ui, clip_rect, opacity).add(egui::Shape::mesh(bottom_gradient(
                 canvas,
@@ -289,15 +401,19 @@ fn paint_slide_layer(
         );
     }
     for object in &live.slide.objects {
-        paint_object(
-            ui,
-            canvas,
-            object,
-            &live.theme,
-            scene.images,
-            opacity,
-            clip_rect,
-        );
+        let unchanged =
+            |other: &LiveSlide| other.slide.objects.iter().any(|o| same_look(object, o));
+        if let Some(opacity) = common.opacity(unchanged, opacity) {
+            paint_object(
+                ui,
+                canvas,
+                object,
+                &live.theme,
+                scene.images,
+                opacity,
+                clip_rect,
+            );
+        }
     }
 }
 
@@ -409,15 +525,25 @@ fn paint_transition_layers(
     {
         paint_background(ui, canvas, &next_scene, rect, 1.0);
         let (old_alpha, new_alpha, old_offset, new_offset) = transition_frame(kind, t);
-        for (scene, opacity, offset) in [
-            (&previous_scene, old_alpha, old_offset),
-            (&next_scene, new_alpha, new_offset),
+        let still = old_offset == Vec2::ZERO && new_offset == Vec2::ZERO;
+        let both = previous_scene.live.zip(next_scene.live).filter(|_| still);
+        let old_common = both.map_or(Common::None, |(_, new)| Common::Skip(new));
+        let new_common = both.map_or(Common::None, |(old, _)| Common::Own(old));
+        for (scene, opacity, offset, common) in [
+            (&previous_scene, old_alpha, old_offset, old_common),
+            (&next_scene, new_alpha, new_offset, new_common),
         ] {
-            if opacity > 0.0
-                && let Some(live) = scene.live
-            {
+            if let Some(live) = scene.live {
                 let delta = Vec2::new(canvas.width() * offset.x, canvas.height() * offset.y);
-                paint_slide_layer(ui, canvas.translate(delta), live, scene, canvas, opacity);
+                paint_slide_layer(
+                    ui,
+                    canvas.translate(delta),
+                    live,
+                    scene,
+                    canvas,
+                    opacity,
+                    common,
+                );
             }
         }
         return;
@@ -797,6 +923,76 @@ mod tests {
     }
 
     #[test]
+    fn an_unchanged_object_stays_at_full_opacity_while_the_others_crossfade() {
+        let shape = |color: [u8; 4], x: f32| SlideObject::Shape {
+            id: uuid::Uuid::new_v4(),
+            rect: lumen_core::Rect {
+                x,
+                y: 0.1,
+                w: 0.2,
+                h: 0.2,
+            },
+            color,
+            corner_radius: 0.0,
+        };
+        let same = [10, 200, 30, 255];
+        let mut project = Project::demo();
+        let doc = &mut project.documents[0];
+        for (slide, own) in doc
+            .slides
+            .iter_mut()
+            .zip([[200, 10, 10, 255], [10, 10, 200, 255]])
+        {
+            slide.background = Background::Solid([18, 22, 30, 255]);
+            slide.text.clear();
+            slide.objects = vec![shape(same, 0.1), shape(own, 0.5)];
+        }
+        let mut runtime = Runtime::default();
+        let (doc_id, first, second) = {
+            let d = &project.documents[0];
+            (d.id, d.slides[0].id, d.slides[1].id)
+        };
+        runtime.trigger(&project, doc_id, first).unwrap();
+        let previous = runtime.output.clone();
+        runtime.trigger(&project, doc_id, second).unwrap();
+        let ctx = egui::Context::default();
+        let frame = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                paint_transition_layers(
+                    ui,
+                    Rect::from_min_size(Pos2::ZERO, Vec2::new(640.0, 360.0)),
+                    &Transition::Fade { millis: 500 },
+                    0.5,
+                    &previous,
+                    None,
+                    &runtime.output,
+                    None,
+                    &HashMap::new(),
+                );
+            });
+        });
+        // Opacity scales the stored colour, so find each shape by its dominant channel.
+        let alphas = |channel: usize| -> Vec<u8> {
+            frame
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Rect(r) => {
+                        let c = r.fill.to_array();
+                        (c[channel] > 60 && (0..3).all(|i| i == channel || c[i] < c[channel] / 2))
+                            .then_some(c[3])
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(alphas(1), [255], "unchanged shape painted once, opaque");
+        let (old, new) = (alphas(0), alphas(2));
+        assert!(old.len() == 1 && old[0] < 255);
+        assert!(new.len() == 1 && new[0] < 255);
+    }
+
+    #[test]
     fn caption_transitions_paint_shared_video_once_at_full_opacity() {
         let mut project = Project::demo();
         let doc = &mut project.documents[0];
@@ -883,13 +1079,7 @@ mod tests {
         runtime.trigger(&project, doc, first).unwrap();
         let previous = runtime.output.clone();
         runtime.trigger(&project, doc, second).unwrap();
-        let transition = OutputTransition {
-            previous,
-            previous_media: None,
-            started: Instant::now() - Duration::from_secs(5),
-            kind: Transition::Cut,
-            waiting_for_media: true,
-        };
+        let transition = OutputTransition::new(previous, None, Transition::Cut, true);
         assert!(transition.is_active());
         assert_eq!(transition.progress(), 0.0);
         let ctx = egui::Context::default();
@@ -988,6 +1178,21 @@ mod tests {
         assert_eq!(new_offset, Vec2::ZERO);
         assert_eq!(transition_frame(&Transition::Cut, -1.0).0, 0.0);
         assert_eq!(transition_frame(&Transition::Cut, 2.0).1, 1.0);
+    }
+
+    #[test]
+    fn an_unstarted_transition_is_at_zero_and_active_until_a_window_starts_it() {
+        let fade = Transition::Fade { millis: 400 };
+        let t = OutputTransition::new(OutputState::default(), None, fade, false);
+        assert_eq!(t.progress(), 0.0);
+        assert!(t.is_active());
+        let shared = t.clone();
+        shared.start();
+        assert!(t.started.get().is_some(), "clones share one start");
+        assert!(t.progress() < 0.5 && t.is_active());
+        let first = *t.started.get().unwrap();
+        t.start();
+        assert_eq!(t.started.get(), Some(&first), "the first start wins");
     }
 
     #[test]

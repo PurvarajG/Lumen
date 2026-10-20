@@ -1146,6 +1146,13 @@ impl eframe::App for LumenApp {
         }
         self.media.poll(ctx, !self.audience_open());
         self.release_media_wait();
+        // The audience window starts the clock on its first frame; start it here when none will.
+        if let Some(t) = self.transition.as_ref().filter(|t| !t.waiting_for_media)
+            && (!self.audience_open()
+                || t.created.elapsed() > std::time::Duration::from_millis(250))
+        {
+            t.start();
+        }
         self.sync_deck();
         while let Some(result) = self.deck.poll() {
             if let Err(error) = result {
@@ -1826,6 +1833,9 @@ impl LumenApp {
                         Ordering::Relaxed,
                     );
                     let mut state = data.lock().map(|s| s.clone()).unwrap_or_default();
+                    if let Some(t) = state.transition.as_ref().filter(|t| !t.waiting_for_media) {
+                        t.start();
+                    }
                     if let Some(video) = &state.video
                         && let Some(texture) = state.media.as_mut()
                         && let Some(frame) =
@@ -2138,9 +2148,10 @@ impl LumenApp {
                 .as_ref()
                 .is_none_or(|p| p.frames().has_frame());
         if let Some(t) = self.transition.as_mut().filter(|t| t.waiting_for_media)
-            && (ready || t.started.elapsed() >= MEDIA_WAIT)
+            && (ready || t.created.elapsed() >= MEDIA_WAIT)
         {
-            t.started = Instant::now();
+            t.created = Instant::now();
+            t.started = Default::default();
             t.waiting_for_media = false;
         }
     }
@@ -2174,13 +2185,12 @@ impl LumenApp {
             // Even a Cut holds the old picture until the new media is ready (no black flash).
             let waiting_for_media = self.live_media_will_load();
             self.transition = (transition_millis(&kind) > 0 || waiting_for_media).then(|| {
-                crate::render::OutputTransition {
+                crate::render::OutputTransition::new(
                     previous,
                     previous_media,
-                    started: Instant::now(),
                     kind,
                     waiting_for_media,
-                }
+                )
             });
             if let Some(cue) = &audio {
                 self.audio.play_cue(cue);
@@ -2246,13 +2256,8 @@ impl LumenApp {
         let previous_media = self.media.image_texture.clone();
         self.apply_actions(&[action]);
         let kind = self.project.transition.clone();
-        self.transition = (transition_millis(&kind) > 0).then(|| crate::render::OutputTransition {
-            previous,
-            previous_media,
-            started: Instant::now(),
-            kind,
-            waiting_for_media: false,
-        });
+        self.transition = (transition_millis(&kind) > 0)
+            .then(|| crate::render::OutputTransition::new(previous, previous_media, kind, false));
     }
     fn sync_audio_clear(&mut self) {
         if self.audio_seen_serial != self.runtime.output.audio_clear_serial {
