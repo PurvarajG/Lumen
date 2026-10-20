@@ -123,7 +123,7 @@ impl AudioState {
 
     pub fn ui(&mut self, ui: &mut Ui) {
         self.poll();
-        ui.heading("Audio");
+        crate::style::section(ui, "Audio");
         ui.horizontal_wrapped(|ui| {
             if ui.button("Add audio files").clicked() && self.pending.is_none() {
                 self.start_file_picker();

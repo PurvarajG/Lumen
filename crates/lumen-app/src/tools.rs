@@ -60,7 +60,7 @@ pub fn timers(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime, n
     let mut changed = false;
     runtime.sync_timers(project);
     let snapshot = project.clone();
-    ui.heading("Timers");
+    crate::style::section(ui, "Timers");
     if ui.button("Add timer").clicked() {
         let id = Uuid::new_v4();
         project.timers.push(TimerDef {
@@ -107,109 +107,115 @@ pub fn timers(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime, n
                     TimerTone::Live => crate::style::LIVE,
                 };
                 ui.label(RichText::new(value).monospace().size(18.0).color(color));
-                if ui
-                    .button(
-                        if runtime.timer_states.get(&t.id).is_some_and(|s| s.running) {
-                            "Pause"
-                        } else {
-                            "Start"
-                        },
-                    )
-                    .clicked()
-                {
-                    let action = if runtime.timer_states.get(&t.id).is_some_and(|s| s.running) {
-                        CueAction::PauseTimer { id: t.id }
-                    } else {
-                        CueAction::StartTimer { id: t.id }
-                    };
-                    let _ = runtime.apply_actions(&snapshot, &[action]);
-                }
-                if ui.button("Reset").clicked() {
-                    let _ = runtime.apply_actions(&snapshot, &[CueAction::ResetTimer { id: t.id }]);
-                }
-                ui.menu_button(crate::style::icon('\u{e1fe}', 16.0), |ui| {
+                ui.horizontal(|ui| {
+                    crate::style::ghost(ui);
                     if ui
-                        .add_enabled(!used, egui::Button::new("Delete timer"))
+                        .button(
+                            if runtime.timer_states.get(&t.id).is_some_and(|s| s.running) {
+                                "Pause"
+                            } else {
+                                "Start"
+                            },
+                        )
                         .clicked()
                     {
-                        remove = Some(i);
-                        ui.close();
+                        let action = if runtime.timer_states.get(&t.id).is_some_and(|s| s.running) {
+                            CueAction::PauseTimer { id: t.id }
+                        } else {
+                            CueAction::StartTimer { id: t.id }
+                        };
+                        let _ = runtime.apply_actions(&snapshot, &[action]);
                     }
+                    if ui.button("Reset").clicked() {
+                        let _ =
+                            runtime.apply_actions(&snapshot, &[CueAction::ResetTimer { id: t.id }]);
+                    }
+                    ui.menu_button(crate::style::icon('\u{e1fe}', 16.0), |ui| {
+                        if ui
+                            .add_enabled(!used, egui::Button::new("Delete timer"))
+                            .clicked()
+                        {
+                            remove = Some(i);
+                            ui.close();
+                        }
+                    });
                 });
             });
             if used {
                 ui.small("Used by a slide or macro action; remove those references first.");
             }
-            egui::ComboBox::from_id_salt(("timer-kind", t.id))
-                .selected_text(match &t.kind {
-                    TimerKind::Countdown { .. } => "Countdown duration",
-                    TimerKind::CountdownTo { .. } => "Countdown to time",
-                    TimerKind::Elapsed => "Elapsed",
-                })
-                .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_label(
-                            matches!(&t.kind, TimerKind::Countdown { .. }),
-                            "Countdown duration",
-                        )
-                        .clicked()
-                    {
-                        t.kind = TimerKind::Countdown {
-                            duration_secs: 300.0,
-                        };
-                        changed = true;
-                    }
-                    if ui
-                        .selectable_label(
-                            matches!(&t.kind, TimerKind::CountdownTo { .. }),
-                            "Countdown to time",
-                        )
-                        .clicked()
-                    {
-                        t.kind = TimerKind::CountdownTo {
-                            hour: 12,
-                            minute: 0,
-                            second: 0,
-                        };
-                        changed = true;
-                    }
-                    if ui
-                        .selectable_label(matches!(&t.kind, TimerKind::Elapsed), "Elapsed")
-                        .clicked()
-                    {
-                        t.kind = TimerKind::Elapsed;
-                        changed = true;
-                    }
-                });
-            match &mut t.kind {
-                TimerKind::Countdown { duration_secs } => {
-                    changed |= ui
-                        .add(
-                            egui::DragValue::new(duration_secs)
-                                .range(0.0..=86400.0)
-                                .suffix(" sec"),
-                        )
-                        .changed();
-                }
-                TimerKind::CountdownTo {
-                    hour,
-                    minute,
-                    second,
-                } => {
-                    ui.horizontal_wrapped(|ui| {
-                        changed |= ui
-                            .add(egui::DragValue::new(hour).range(0..=23).prefix("HH "))
-                            .changed();
-                        changed |= ui
-                            .add(egui::DragValue::new(minute).range(0..=59).prefix("MM "))
-                            .changed();
-                        changed |= ui
-                            .add(egui::DragValue::new(second).range(0..=59).prefix("SS "))
-                            .changed();
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt(("timer-kind", t.id))
+                    .selected_text(match &t.kind {
+                        TimerKind::Countdown { .. } => "Countdown duration",
+                        TimerKind::CountdownTo { .. } => "Countdown to time",
+                        TimerKind::Elapsed => "Elapsed",
+                    })
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(
+                                matches!(&t.kind, TimerKind::Countdown { .. }),
+                                "Countdown duration",
+                            )
+                            .clicked()
+                        {
+                            t.kind = TimerKind::Countdown {
+                                duration_secs: 300.0,
+                            };
+                            changed = true;
+                        }
+                        if ui
+                            .selectable_label(
+                                matches!(&t.kind, TimerKind::CountdownTo { .. }),
+                                "Countdown to time",
+                            )
+                            .clicked()
+                        {
+                            t.kind = TimerKind::CountdownTo {
+                                hour: 12,
+                                minute: 0,
+                                second: 0,
+                            };
+                            changed = true;
+                        }
+                        if ui
+                            .selectable_label(matches!(&t.kind, TimerKind::Elapsed), "Elapsed")
+                            .clicked()
+                        {
+                            t.kind = TimerKind::Elapsed;
+                            changed = true;
+                        }
                     });
+                match &mut t.kind {
+                    TimerKind::Countdown { duration_secs } => {
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(duration_secs)
+                                    .range(0.0..=86400.0)
+                                    .suffix(" sec"),
+                            )
+                            .changed();
+                    }
+                    TimerKind::CountdownTo {
+                        hour,
+                        minute,
+                        second,
+                    } => {
+                        ui.horizontal_wrapped(|ui| {
+                            changed |= ui
+                                .add(egui::DragValue::new(hour).range(0..=23).prefix("HH "))
+                                .changed();
+                            changed |= ui
+                                .add(egui::DragValue::new(minute).range(0..=59).prefix("MM "))
+                                .changed();
+                            changed |= ui
+                                .add(egui::DragValue::new(second).range(0..=59).prefix("SS "))
+                                .changed();
+                        });
+                    }
+                    TimerKind::Elapsed => {}
                 }
-                TimerKind::Elapsed => {}
-            }
+            });
             changed |= ui.checkbox(&mut t.allow_overrun, "Allow overrun").changed();
             let mut warn = t.warn_at_secs.unwrap_or(0.0);
             let had = t.warn_at_secs.is_some();
@@ -254,7 +260,7 @@ pub fn timers(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime, n
 pub fn messages(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime, now: u32) -> bool {
     let mut changed = false;
     let snapshot = project.clone();
-    ui.heading("Messages");
+    crate::style::section(ui, "Messages");
     if ui.button("Add message").clicked() {
         project.messages.push(MessageTemplate {
             id: Uuid::new_v4(),
@@ -281,6 +287,7 @@ pub fn messages(ui: &mut egui::Ui, project: &mut Project, runtime: &mut Runtime,
             }
             ui.horizontal_wrapped(|ui| {
                 changed |= ui.text_edit_singleline(&mut m.name).changed();
+                crate::style::ghost(ui);
                 if ui.button("Show").clicked() {
                     let _ =
                         runtime.apply_actions(&snapshot, &[CueAction::ShowMessage { id: m.id }]);

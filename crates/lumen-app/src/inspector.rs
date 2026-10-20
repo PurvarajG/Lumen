@@ -6,7 +6,6 @@ use uuid::Uuid;
 
 pub fn slide(ui: &mut egui::Ui, slide: &mut Slide, project: &mut Project) -> bool {
     let mut changed = false;
-    ui.heading("Slide inspector");
     changed |= ui.text_edit_singleline(&mut slide.label).changed();
     let saffron = crate::style::SAFFRON;
     ui.label(format!(
