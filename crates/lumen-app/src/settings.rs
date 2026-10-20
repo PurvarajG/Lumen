@@ -70,6 +70,8 @@ pub struct Settings {
     pub book_blocks_per_slide: usize,
     pub books_note_seen: bool,
     pub book_downloads: Vec<String>,
+    /// Scale given to photos and videos when they are added to a show.
+    pub new_media_fit: lumen_core::MediaFit,
     pub http_enabled: bool,
     pub http_addr: String,
     pub http_token: String,
@@ -100,6 +102,7 @@ impl Default for Settings {
             book_blocks_per_slide: 1,
             books_note_seen: false,
             book_downloads: Vec::new(),
+            new_media_fit: lumen_core::MediaFit::Auto,
             http_enabled: false,
             http_addr: "127.0.0.1:47800".into(),
             http_token: generate_token(),
@@ -413,6 +416,22 @@ pub fn settings_panel(
                     .changed();
             }
         });
+    ui.add_space(8.0);
+    ui.label("New photos and videos");
+    egui::ComboBox::from_id_salt("new-media-fit")
+        .selected_text(crate::inspector::fit_label(settings.new_media_fit))
+        .show_ui(ui, |ui| {
+            for fit in crate::inspector::FIT_CHOICES {
+                action.changed |= ui
+                    .selectable_value(
+                        &mut settings.new_media_fit,
+                        fit,
+                        crate::inspector::fit_label(fit),
+                    )
+                    .changed();
+            }
+        });
+    ui.add_space(8.0);
     action.changed |= stage_options(ui, &mut settings.stage, project);
     if let Err(error) = settings.validate() {
         ui.add_space(6.0);
@@ -494,6 +513,12 @@ mod tests {
                 .count(),
             1
         );
+    }
+    #[test]
+    fn old_settings_without_new_media_fit_load_as_auto() {
+        let old: Settings = serde_json::from_str(r#"{"book_blocks_per_slide": 2}"#).unwrap();
+        assert_eq!(old.new_media_fit, lumen_core::MediaFit::Auto);
+        assert_eq!(old.book_blocks_per_slide, 2);
     }
     #[test]
     fn default_settings_are_valid_and_token_is_url_safe() {

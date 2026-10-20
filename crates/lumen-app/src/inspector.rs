@@ -599,8 +599,17 @@ fn rgba(c: [u8; 4]) -> egui::Color32 {
 fn bytes(c: egui::Color32) -> [u8; 4] {
     [c.r(), c.g(), c.b(), c.a()]
 }
+/// Every scale choice, in the order menus list them.
+pub const FIT_CHOICES: [MediaFit; 4] = [
+    MediaFit::Auto,
+    MediaFit::Fit,
+    MediaFit::Fill,
+    MediaFit::Stretch,
+];
+
 pub fn fit_label(fit: MediaFit) -> &'static str {
     match fit {
+        MediaFit::Auto => "Auto (fill, keep portraits whole)",
         MediaFit::Fit => "Fit (show bars)",
         MediaFit::Fill => "Fill screen (crop)",
         MediaFit::Stretch => "Stretch",
@@ -615,7 +624,7 @@ fn scale_combo(ui: &mut egui::Ui, fit: &mut MediaFit) -> bool {
         egui::ComboBox::from_id_salt("media-fit")
             .selected_text(fit_label(*fit))
             .show_ui(ui, |ui| {
-                for choice in [MediaFit::Fit, MediaFit::Fill, MediaFit::Stretch] {
+                for choice in FIT_CHOICES {
                     ui.selectable_value(fit, choice, fit_label(choice));
                 }
             });

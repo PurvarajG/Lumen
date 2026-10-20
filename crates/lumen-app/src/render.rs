@@ -263,6 +263,15 @@ pub fn media_rect_uv(texture: Vec2, canvas: Rect, fit: MediaFit) -> (Rect, Rect)
         return (Rect::from_center_size(canvas.center(), Vec2::ZERO), all);
     }
     match fit {
+        MediaFit::Auto => media_rect_uv(
+            texture,
+            canvas,
+            if (texture.x >= texture.y) == (canvas.width() >= canvas.height()) {
+                MediaFit::Fill
+            } else {
+                MediaFit::Fit
+            },
+        ),
         MediaFit::Fit => (fitted(canvas, texture), all),
         MediaFit::Stretch => (canvas, all),
         MediaFit::Fill => {
@@ -888,6 +897,26 @@ mod tests {
     }
 
     #[test]
+    fn media_auto_fills_a_matching_shape_and_fits_a_mismatched_one() {
+        let canvas = Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0));
+        let landscape = Vec2::new(1440.0, 1080.0);
+        let portrait = Vec2::new(1080.0, 1920.0);
+        assert_eq!(
+            media_rect_uv(landscape, canvas, MediaFit::Auto),
+            media_rect_uv(landscape, canvas, MediaFit::Fill)
+        );
+        assert_eq!(
+            media_rect_uv(portrait, canvas, MediaFit::Auto),
+            media_rect_uv(portrait, canvas, MediaFit::Fit)
+        );
+        let tall = Rect::from_min_size(Pos2::ZERO, Vec2::new(1080.0, 1920.0));
+        assert_eq!(
+            media_rect_uv(portrait, tall, MediaFit::Auto),
+            media_rect_uv(portrait, tall, MediaFit::Fill)
+        );
+    }
+
+    #[test]
     fn media_fill_crops_a_portrait_picture_to_a_band() {
         let canvas = Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0));
         let (rect, uv) = media_rect_uv(Vec2::new(1080.0, 1920.0), canvas, MediaFit::Fill);
@@ -900,7 +929,7 @@ mod tests {
     #[test]
     fn media_fit_draws_nothing_for_an_empty_texture() {
         let canvas = Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0));
-        for fit in [MediaFit::Fit, MediaFit::Fill, MediaFit::Stretch] {
+        for fit in crate::inspector::FIT_CHOICES {
             let (rect, _) = media_rect_uv(Vec2::ZERO, canvas, fit);
             assert_eq!(rect.size(), Vec2::ZERO);
             assert!(rect.center().x.is_finite() && rect.center().y.is_finite());

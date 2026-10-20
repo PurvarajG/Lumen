@@ -42,7 +42,7 @@ pub enum FileAction {
     Autosave(u64, u64, PathBuf, Box<Project>),
     PickMedia(bool),
     /// Add files to the running order; `None` paths opens the multi-select picker.
-    Add(u64, Option<Vec<PathBuf>>, uuid::Uuid),
+    Add(u64, Option<Vec<PathBuf>>, uuid::Uuid, lumen_core::MediaFit),
 }
 
 pub fn launch(action: FileAction, tx: Sender<FileResult>, repaint_ctx: Context) {
@@ -167,7 +167,7 @@ pub fn launch(action: FileAction, tx: Sender<FileResult>, repaint_ctx: Context) 
                 };
                 let _ = tx.send(FileResult::PickMedia(result, video));
             }
-            FileAction::Add(id, paths, theme) => {
+            FileAction::Add(id, paths, theme, fit) => {
                 let picked = paths.or_else(|| {
                     rfd::FileDialog::new()
                         .add_filter("Media, slides, songs and audio", &crate::add::EXTENSIONS)
@@ -178,6 +178,7 @@ pub fn launch(action: FileAction, tx: Sender<FileResult>, repaint_ctx: Context) 
                     crate::add::build_batch(
                         &plan,
                         theme,
+                        fit,
                         |done, total| {
                             let _ = tx.send(FileResult::AddProgress(id, done, total));
                             repaint_ctx.request_repaint();

@@ -216,6 +216,8 @@ pub struct Slide {
 /// How a photo or video whose shape is not 16:9 meets the screen.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum MediaFit {
+    /// Fill when the picture and the screen are both landscape or both portrait, else Fit.
+    Auto,
     /// Whole picture, bars where the shape differs.
     #[default]
     Fit,

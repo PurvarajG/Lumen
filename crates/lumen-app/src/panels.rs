@@ -856,7 +856,7 @@ fn cue_menu(app: &mut LumenApp, response: egui::Response, document_id: Uuid, sli
                     .size(style::CAPTION)
                     .color(style::TEXT_DIM),
             );
-            for choice in [MediaFit::Fit, MediaFit::Fill, MediaFit::Stretch] {
+            for choice in crate::inspector::FIT_CHOICES {
                 let label = crate::inspector::fit_label(choice);
                 if ui.selectable_label(*current == choice, label).clicked() {
                     set_fit(app, document_id, slide, choice);

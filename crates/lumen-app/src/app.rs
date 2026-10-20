@@ -989,12 +989,12 @@ impl LumenApp {
                                 path: path.clone(),
                                 looped: true,
                                 muted: true,
-                                fit: lumen_core::MediaFit::default(),
+                                fit: self.settings.new_media_fit,
                             }
                         } else {
                             Background::Image {
                                 path: path.clone(),
-                                fit: lumen_core::MediaFit::default(),
+                                fit: self.settings.new_media_fit,
                             }
                         };
                         self.mark();
@@ -1360,7 +1360,12 @@ impl LumenApp {
         self.operation_counter = self.operation_counter.wrapping_add(1);
         self.adding.push(self.operation_counter);
         file::launch(
-            FileAction::Add(self.operation_counter, paths, theme),
+            FileAction::Add(
+                self.operation_counter,
+                paths,
+                theme,
+                self.settings.new_media_fit,
+            ),
             self.tx.clone(),
             self.repaint_ctx.clone(),
         );

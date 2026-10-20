@@ -158,6 +158,7 @@ fn build_with_progress(
     kind: Kind,
     path: &Path,
     theme: Uuid,
+    fit: MediaFit,
     progress: impl FnMut(&str),
 ) -> Result<ImportReport, String> {
     let stem = path
@@ -170,7 +171,7 @@ fn build_with_progress(
             stem.clone(),
             Background::Image {
                 path: path.to_owned(),
-                fit: MediaFit::default(),
+                fit,
             },
             None,
         ),
@@ -212,6 +213,7 @@ fn build_with_progress(
 pub fn build_batch(
     plan: &[Addition],
     theme: Uuid,
+    fit: MediaFit,
     mut progress: impl FnMut(usize, usize),
     mut deck_progress: impl FnMut(&str),
 ) -> AddBatch {
@@ -225,7 +227,7 @@ pub fn build_batch(
             Addition::Skip(path) => batch.skipped.push(file_name(path)),
             Addition::Add(kind, path) => {
                 progress(batch.documents.len() + 1, total);
-                match build_with_progress(*kind, path, theme, &mut deck_progress) {
+                match build_with_progress(*kind, path, theme, fit, &mut deck_progress) {
                     Ok(report) => {
                         batch.warnings.extend(report.warnings);
                         batch.documents.push(report.document);
@@ -445,8 +447,14 @@ mod tests {
     #[test]
     fn media_files_become_single_slide_documents() {
         let theme = Uuid::new_v4();
-        let image =
-            build_with_progress(Kind::Image, Path::new("/m/Welcome.png"), theme, |_| {}).unwrap();
+        let image = build_with_progress(
+            Kind::Image,
+            Path::new("/m/Welcome.png"),
+            theme,
+            MediaFit::Fit,
+            |_| {},
+        )
+        .unwrap();
         let slide = &image.document.slides[0];
         assert_eq!(image.document.name, "Welcome");
         assert_eq!(image.document.slides.len(), 1);
@@ -459,8 +467,26 @@ mod tests {
                 fit: MediaFit::Fit
             }
         );
-        let video =
-            build_with_progress(Kind::Video, Path::new("/m/Intro.mp4"), theme, |_| {}).unwrap();
+        let auto = build_with_progress(
+            Kind::Image,
+            Path::new("/m/a.png"),
+            theme,
+            MediaFit::Auto,
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(
+            auto.document.slides[0].background.fit(),
+            Some(MediaFit::Auto)
+        );
+        let video = build_with_progress(
+            Kind::Video,
+            Path::new("/m/Intro.mp4"),
+            theme,
+            MediaFit::Fit,
+            |_| {},
+        )
+        .unwrap();
         assert_eq!(
             video.document.slides[0].background,
             Background::Video {
@@ -470,8 +496,14 @@ mod tests {
                 fit: MediaFit::Fit
             }
         );
-        let audio =
-            build_with_progress(Kind::Audio, Path::new("/m/Song.mp3"), theme, |_| {}).unwrap();
+        let audio = build_with_progress(
+            Kind::Audio,
+            Path::new("/m/Song.mp3"),
+            theme,
+            MediaFit::Fit,
+            |_| {},
+        )
+        .unwrap();
         let slide = &audio.document.slides[0];
         assert_eq!(slide.label, "Song.mp3");
         assert_eq!(slide.background, Background::Solid([0, 0, 0, 255]));
@@ -492,7 +524,13 @@ mod tests {
         let theme = Uuid::new_v4();
         let plan = plan_additions(&[p("/m/a.png"), p("/m/notes.docx"), p("/m/b.mp3")]);
         let mut seen = Vec::new();
-        let batch = build_batch(&plan, theme, |done, total| seen.push((done, total)), |_| {});
+        let batch = build_batch(
+            &plan,
+            theme,
+            MediaFit::Fit,
+            |done, total| seen.push((done, total)),
+            |_| {},
+        );
         assert_eq!(seen, vec![(1, 2), (2, 2)]);
         assert_eq!(batch.documents.len(), 2);
         assert_eq!(batch.skipped, vec!["notes.docx"]);
