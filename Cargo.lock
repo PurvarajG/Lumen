@@ -2297,6 +2297,7 @@ dependencies = [
  "image",
  "lumen-core",
  "thiserror 2.0.21",
+ "unicode-normalization",
 ]
 
 [[package]]

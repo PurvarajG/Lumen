@@ -177,22 +177,27 @@ pub fn contains_gujarati(text: &str) -> bool {
 }
 pub fn gu_label(ui: &mut Ui, text: &str, size: f32) -> Response {
     if !contains_gujarati(text) {
-        return ui.label(egui::RichText::new(text).size(size));
+        let plain = lumen_text::fold_unsupported(text, lumen_text::poppins_covers);
+        return ui.label(egui::RichText::new(plain).size(size));
     }
     shaped_label(ui, text, size, false, false)
 }
 pub fn gu_selectable(ui: &mut Ui, selected: bool, text: &str, size: f32) -> Response {
     if !contains_gujarati(text) {
+        let plain = lumen_text::fold_unsupported(text, lumen_text::poppins_covers);
         return ui
             .add_sized(
                 [ui.available_width(), crate::style::CONTROL],
                 egui::Button::selectable(
                     selected,
-                    (egui::RichText::new(text).size(size), egui::Atom::grow()),
+                    (
+                        egui::RichText::new(plain.as_ref()).size(size),
+                        egui::Atom::grow(),
+                    ),
                 )
                 .truncate(),
             )
-            .on_hover_text(text);
+            .on_hover_text(plain);
     }
     shaped_label(ui, text, size, true, selected)
 }

@@ -1,10 +1,11 @@
 //! Shaped slide text rendering for Lumen Presenter.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    borrow::Cow,
+    collections::{HashMap, HashSet, VecDeque},
     fs,
     path::Path,
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use cosmic_text::{
@@ -13,6 +14,7 @@ use cosmic_text::{
 };
 use lumen_core::{TextAlign, VerticalAlign, markup::Span};
 use thiserror::Error;
+use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 
 const DEFAULT_CACHE_BUDGET: usize = 64 * 1024 * 1024;
 const MAX_DIMENSION: u32 = 4096;
@@ -135,6 +137,8 @@ pub struct TextRenderer {
     cache_budget: usize,
     gujarati_face: &'static str,
     gujarati_scale: f32,
+    /// Family → codepoints its regular face covers, filled the first time a family is shaped.
+    coverage: HashMap<String, HashSet<u32>>,
     #[cfg(test)]
     face_names: HashMap<cosmic_text::fontdb::ID, String>,
 }
@@ -194,6 +198,7 @@ impl TextRenderer {
             cache_budget,
             gujarati_face,
             gujarati_scale,
+            coverage: HashMap::new(),
             #[cfg(test)]
             face_names,
         }
@@ -319,15 +324,39 @@ impl TextRenderer {
         (used, layout.1, layout.2)
     }
 
+    fn ensure_coverage(&mut self, family: &str) {
+        if !self.coverage.contains_key(family) {
+            let set = family_coverage(self.fonts.db(), family);
+            self.coverage.insert(family.to_owned(), set);
+        }
+    }
+
     fn layout_at(&mut self, req: &TextRequest<'_>, font_px: f32) -> (f32, f32, Buffer) {
         let line_px = font_px * req.line_height;
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(font_px, line_px));
         buffer.set_size(Some(req.width_px as f32), None);
         buffer.set_wrap(Wrap::WordOrGlyph);
-        let spans = styled_runs(req, self.gujarati_face, font_px, self.gujarati_scale);
+        self.ensure_coverage("Poppins");
+        self.ensure_coverage(self.gujarati_face);
+        let (latin, gujarati) = (
+            &self.coverage["Poppins"],
+            &self.coverage[self.gujarati_face],
+        );
+        let spans = styled_runs(
+            req,
+            self.gujarati_face,
+            font_px,
+            self.gujarati_scale,
+            &|is_gujarati, ch| {
+                let set = if is_gujarati { gujarati } else { latin };
+                set.contains(&(ch as u32))
+            },
+        );
         let default = Attrs::new().family(Family::Name("Poppins"));
         buffer.set_rich_text(
-            spans,
+            spans
+                .iter()
+                .map(|(text, attrs)| (text.as_ref(), attrs.clone())),
             &default,
             Shaping::Advanced,
             Some(to_align(req.align)),
@@ -454,12 +483,73 @@ fn user_font_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(|home| Path::new(&home).join("Library/Fonts"))
 }
 
+/// Codepoints the regular face of `family` has a glyph for.
+// shortcut: bold/italic faces are assumed to cover what the regular face covers; check them if a font family is uneven.
+fn family_coverage(db: &cosmic_text::fontdb::Database, family: &str) -> HashSet<u32> {
+    let Some(id) = db.query(&cosmic_text::fontdb::Query {
+        families: &[cosmic_text::fontdb::Family::Name(family)],
+        ..Default::default()
+    }) else {
+        return HashSet::new();
+    };
+    db.with_face_data(id, charmap_codepoints)
+        .unwrap_or_default()
+}
+
+fn charmap_codepoints(data: &[u8], index: u32) -> HashSet<u32> {
+    use cosmic_text::skrifa::{FontRef, MetadataProvider};
+    FontRef::from_index(data, index)
+        .map(|font| font.charmap().mappings().map(|(cp, _)| cp).collect())
+        .unwrap_or_default()
+}
+
+/// Whether the bundled Poppins Regular (the UI's own copy matches it) has a glyph for `ch`.
+pub fn poppins_covers(ch: char) -> bool {
+    static SET: OnceLock<HashSet<u32>> = OnceLock::new();
+    SET.get_or_init(|| charmap_codepoints(POPPINS_REGULAR, 0))
+        .contains(&(ch as u32))
+}
+
+/// Characters the font lacks become their plain base letter (ṇ → n, ñ → n) when the font has it.
+pub fn fold_unsupported(text: &str, covers: impl Fn(char) -> bool) -> Cow<'_, str> {
+    // The shaper hides these, and ZWNJ changes Indic shaping, so they are never replaced.
+    let format = |c: char| matches!(c, '\u{200B}'..='\u{200F}' | '\u{2060}' | '\u{FEFF}');
+    let replacement = |c: char| -> Option<String> {
+        if covers(c) || format(c) {
+            return None;
+        }
+        // North Indic quarter mark (a refrain mark in kirtans) → Gujarati abbreviation sign.
+        if c == '\u{A836}' && covers('\u{0AF0}') {
+            return Some("\u{0AF0}".into());
+        }
+        let plain: String = c
+            .to_string()
+            .nfd()
+            .filter(|m| !is_combining_mark(*m))
+            .collect();
+        (!plain.is_empty() && plain.chars().all(&covers)).then_some(plain)
+    };
+    let Some((first, _)) = text.char_indices().find(|(_, c)| replacement(*c).is_some()) else {
+        return Cow::Borrowed(text);
+    };
+    let mut out = String::with_capacity(text.len());
+    out.push_str(&text[..first]);
+    for c in text[first..].chars() {
+        match replacement(c) {
+            Some(plain) => out.push_str(&plain),
+            None => out.push(c),
+        }
+    }
+    Cow::Owned(out)
+}
+
 fn styled_runs<'a>(
     req: &'a TextRequest<'_>,
     gujarati_face: &'static str,
     font_px: f32,
     gujarati_scale: f32,
-) -> Vec<(&'a str, Attrs<'static>)> {
+    covers: &dyn Fn(bool, char) -> bool,
+) -> Vec<(Cow<'a, str>, Attrs<'static>)> {
     let mut result = Vec::new();
     for span in req.spans {
         let attrs_for = |gujarati: bool| {
@@ -490,18 +580,24 @@ fn styled_runs<'a>(
         let mut start = 0;
         let mut current = None;
         for (index, ch) in span.text.char_indices() {
-            let gujarati = ('\u{0A80}'..='\u{0AFF}').contains(&ch);
+            // U+A830-A83F holds ꠶, which kirtans use as a refrain mark beside Gujarati.
+            let gujarati = matches!(ch, '\u{0A80}'..='\u{0AFF}' | '\u{A830}'..='\u{A83F}');
             if current.is_some_and(|value| value != gujarati) {
+                let is_gujarati = current.unwrap_or(false);
                 result.push((
-                    &span.text[start..index],
-                    attrs_for(current.unwrap_or(false)),
+                    fold_unsupported(&span.text[start..index], |c| covers(is_gujarati, c)),
+                    attrs_for(is_gujarati),
                 ));
                 start = index;
             }
             current = Some(gujarati);
         }
         if start < span.text.len() {
-            result.push((&span.text[start..], attrs_for(current.unwrap_or(false))));
+            let is_gujarati = current.unwrap_or(false);
+            result.push((
+                fold_unsupported(&span.text[start..], |c| covers(is_gujarati, c)),
+                attrs_for(is_gujarati),
+            ));
         }
     }
     result
@@ -791,6 +887,56 @@ mod tests {
             line_height: 1.2,
             shrink_to_fit: false,
         }
+    }
+
+    #[test]
+    fn missing_characters_fold_to_their_plain_letter() {
+        let poppins = |c: char| poppins_covers(c);
+        assert_eq!(fold_unsupported("ṇ Ṛ ḍ", poppins), "n R d");
+        assert_eq!(fold_unsupported("Kṛṣṇa", poppins), "Krsna");
+        assert_eq!(fold_unsupported("ñ", |c| c == 'n'), "n");
+        assert_eq!(fold_unsupported("ā", |c| c == 'a' || c == 'ā'), "ā");
+        assert_eq!(fold_unsupported("ā", |c| c == 'a'), "a");
+        // Nothing to fall back to: the original stays.
+        assert_eq!(fold_unsupported("ā", |_| false), "ā");
+        assert_eq!(fold_unsupported("ꠣ ક્ષ", |_| true), "ꠣ ક્ષ");
+        assert_eq!(
+            fold_unsupported("કે\u{200C}ક", |c| c == 'ક' || c == 'ે'),
+            "કે\u{200C}ક"
+        );
+        let gujarati = |c: char| c == '\u{0AF0}';
+        assert_eq!(fold_unsupported("\u{A836}", gujarati), "\u{0AF0}");
+        assert_eq!(fold_unsupported("\u{A836}", |_| false), "\u{A836}");
+        assert!(matches!(
+            fold_unsupported("Hello ā", poppins),
+            Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn diacritics_poppins_lacks_shape_as_plain_poppins_letters() {
+        let mut renderer = TextRenderer::new();
+        let shaped = renderer.shape_for_test("Kṛṣṇa ṇ Ḍ", false, false);
+        assert!(!shaped.glyphs.is_empty());
+        assert!(
+            shaped
+                .glyphs
+                .iter()
+                .all(|g| g.face.contains("Poppins") && g.glyph_id > 0),
+            "{:?}",
+            shaped.glyphs
+        );
+    }
+
+    #[test]
+    fn refrain_mark_is_drawn_with_the_gujarati_face() {
+        let mut renderer = TextRenderer::new();
+        let shaped = renderer.shape_for_test("ટેક \u{A836}", false, false);
+        assert!(
+            shaped.glyphs.iter().all(|g| g.glyph_id > 0),
+            "{:?}",
+            shaped.glyphs
+        );
     }
 
     #[test]
