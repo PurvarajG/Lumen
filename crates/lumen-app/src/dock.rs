@@ -205,7 +205,7 @@ impl LumenApp {
             .filter_map(|leaf| leaf.tabs.get(leaf.active.0).copied())
             .collect();
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE)
+            .frame(egui::Frame::new().fill(style::CANVAS))
             .show(ctx, |ui| {
                 let mut viewer = Viewer { app: self, active };
                 DockArea::new(&mut state)
@@ -327,16 +327,21 @@ fn dock_style(base: &egui::Style) -> Style {
     let mut s = Style::from_egui(base);
     let tab = |fill: Color32, text: Color32| TabInteractionStyle {
         outline_color: Color32::TRANSPARENT,
-        corner_radius: CornerRadius::same(3),
+        corner_radius: CornerRadius::same(style::RADIUS),
         bg_fill: fill,
         text_color: text,
     };
-    s.dock_area_padding = None;
+    s.dock_area_padding = Some(Margin::same(style::GAP as i8));
     s.main_surface_border_stroke = Stroke::NONE;
     s.tab_bar.bg_fill = style::PANEL;
-    s.tab_bar.hline_color = style::LINE;
+    s.tab_bar.hline_color = Color32::TRANSPARENT;
     s.tab_bar.height = style::CONTROL;
-    s.tab_bar.corner_radius = CornerRadius::ZERO;
+    s.tab_bar.corner_radius = CornerRadius {
+        nw: style::RADIUS_SURFACE,
+        ne: style::RADIUS_SURFACE,
+        sw: 0,
+        se: 0,
+    };
     s.tab.active = tab(style::RAISED, style::TEXT);
     s.tab.focused = tab(style::RAISED, style::TEXT);
     s.tab.active_with_kb_focus = tab(style::RAISED, style::TEXT);
@@ -344,15 +349,20 @@ fn dock_style(base: &egui::Style) -> Style {
     s.tab.inactive = tab(Color32::TRANSPARENT, style::TEXT_DIM);
     s.tab.inactive_with_kb_focus = tab(Color32::TRANSPARENT, style::TEXT_DIM);
     s.tab.hovered = tab(style::RAISED, style::TEXT);
-    s.tab.tab_body.bg_fill = Color32::TRANSPARENT;
+    s.tab.tab_body.bg_fill = style::PANEL;
     s.tab.tab_body.stroke = Stroke::NONE;
     s.tab.tab_body.inner_margin = Margin::ZERO;
-    s.tab.tab_body.corner_radius = CornerRadius::ZERO;
+    s.tab.tab_body.corner_radius = CornerRadius {
+        nw: 0,
+        ne: 0,
+        sw: style::RADIUS_SURFACE,
+        se: style::RADIUS_SURFACE,
+    };
     s.tab.hline_below_active_tab_name = false;
-    s.separator.width = 1.0;
+    s.separator.width = style::GAP;
     s.separator.extra_interact_width = 3.0;
-    s.separator.color_idle = style::LINE;
-    s.separator.color_hovered = style::TEXT_DIM;
+    s.separator.color_idle = style::CANVAS;
+    s.separator.color_hovered = style::LINE;
     s.separator.color_dragged = style::SAFFRON;
     s.overlay.selection_color = style::SAFFRON.gamma_multiply(0.25);
     // Drop on a node's edge to split it, in its middle to stack.

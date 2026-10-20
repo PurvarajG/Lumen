@@ -28,10 +28,13 @@ pub const CONTROL: f32 = 28.0;
 pub const PRIMARY: f32 = 40.0;
 pub const PADDING: i8 = 12;
 pub const GAP: f32 = 8.0;
+pub const RADIUS: u8 = 6;
+pub const RADIUS_SURFACE: u8 = 8;
 pub const SECTION_GAP: f32 = 20.0;
 pub const ON_DECK_RAIL: f32 = 3.0;
 pub const BRAND_MARK: f32 = 28.0;
 
+// Radius lock: controls 6; surfaces, windows, and modals 8; status pills fully rounded.
 pub fn install(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
     let mut fonts = FontDefinitions::default();
@@ -123,6 +126,18 @@ pub fn install(ctx: &egui::Context) {
     v.widgets.active.bg_fill = RAISED;
     v.widgets.active.weak_bg_fill = RAISED;
     v.widgets.active.bg_stroke = Stroke::new(2.0_f32, SAFFRON);
+    for widget in [
+        &mut v.widgets.noninteractive,
+        &mut v.widgets.inactive,
+        &mut v.widgets.hovered,
+        &mut v.widgets.active,
+        &mut v.widgets.open,
+    ] {
+        widget.corner_radius = egui::CornerRadius::same(RADIUS);
+    }
+    v.widgets.hovered.bg_stroke = Stroke::NONE;
+    v.menu_corner_radius = egui::CornerRadius::same(RADIUS_SURFACE);
+    v.window_corner_radius = egui::CornerRadius::same(RADIUS_SURFACE);
     v.text_cursor.stroke = Stroke::new(2.0_f32, SAFFRON);
     v.text_cursor.preview = true;
     ctx.set_visuals_of(egui::Theme::Dark, v);
@@ -140,7 +155,15 @@ pub fn primary(text: &str) -> egui::Button<'_> {
     egui::Button::new(RichText::new(text).strong().color(SAFFRON_INK))
         .fill(SAFFRON)
         .stroke(Stroke::NONE)
-        .corner_radius(4)
+        .corner_radius(RADIUS)
+}
+
+/// Ghost buttons: no fill or outline until hovered. For rows of secondary actions only.
+#[allow(dead_code)] // Adopted by the H1.3 header and tool action rows.
+pub fn ghost(ui: &mut egui::Ui) {
+    let w = &mut ui.visuals_mut().widgets;
+    w.inactive.weak_bg_fill = Color32::TRANSPARENT;
+    w.inactive.bg_stroke = Stroke::NONE;
 }
 
 pub fn icon(glyph: char, size: f32) -> RichText {
