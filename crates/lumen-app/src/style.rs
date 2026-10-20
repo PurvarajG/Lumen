@@ -159,7 +159,6 @@ pub fn primary(text: &str) -> egui::Button<'_> {
 }
 
 /// Ghost buttons: no fill or outline until hovered. For rows of secondary actions only.
-#[allow(dead_code)] // Adopted by the H1.3 header and tool action rows.
 pub fn ghost(ui: &mut egui::Ui) {
     let w = &mut ui.visuals_mut().widgets;
     w.inactive.weak_bg_fill = Color32::TRANSPARENT;

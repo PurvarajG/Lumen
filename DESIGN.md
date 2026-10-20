@@ -6,17 +6,18 @@ Mode: **Operate** (impeccable). Taste dials: DESIGN_VARIANCE 3, MOTION_INTENSITY
 
 - **Type:** Poppins for all English/Latin text, UI and slides (bundled, OFL; Regular, Medium, SemiBold, Bold + Italic). ChitraUni for all Gujarati, UI and slides, loaded at runtime from the user's installed fonts (`~/Library/Fonts`, `/Library/Fonts`; commercial © Summit Information Technologies, never bundled or committed); bundled Noto Sans Gujarati (OFL) is the fallback when ChitraUni is not installed, and the app shows a one-line notice in Settings saying which Gujarati face is active. Gujarati is always shaped through lumen-text, including in UI lists. Scale (logical pt): 11 caption, 13 body, 15 section heading (semibold), 20 panel title, 28 live clock. Tabular numerals for clocks/timers. Never below 11.
 - **Palette (tokens in `style.rs`, the only place colours are defined):**
-  - `bg` #121316 window ground, `panel` #1A1C20, `raised` #23262B, `line` #2E3238 (1 px separators only)
+  - `bg` #121316 window ground, `panel` #1A1C20, `raised` #23262B, `line` #2E3238 (form-control outlines and in-pane dividers); panes are separated by an 8 pt gap on `bg`
   - `text` #ECE8E1 warm white, `text_dim` #A39E96 (≥4.5:1 on panel), `text_faint` #77726B (captions only, ≥3:1)
   - `saffron` #F2A33A signature / primary action / selection, `saffron_ink` #1A1206 text on saffron
   - `live` #E5484D LIVE state only, `live_ink` #FFFFFF
   - `ok` #46A758 running timer/connected, `warn` #F5B83D timer warning, `info` #5B9BD5 neutral notices
 - **Density:** 8 pt grid; control height 28 pt (primary transport 40 pt); panel padding 12; group gap 8; section gap 20.
+- **Radius lock:** controls 6 pt; surfaces (menus, popups, panes, tiles, drop zones), windows and modals 8 pt; status pills fully rounded.
 - **Signature move — the saffron "up next" rail:** the next cue to go live carries a 3 pt saffron rail and a soft saffron glow in the cue grid and in the running order, so the operator always sees what Next will send. LIVE is a red pill + red outline only on the cue currently on air. Nothing else uses saffron fill except the primary "Go live" action.
 
 ## Layout (dockable panes)
 
-The header (project name · Prepare / Present segmented switch · output status pills · Save state · File / Undo / Redo / Settings / Outputs / Shortcuts / Reset layout) and the status bar are fixed. Everything between them is a dock of six panes (egui_dock): **Running order**, **Macros**, **Preview**, **Cues**, **Live** and **Tools** (named **Inspector** in Prepare). The operator drags a pane's tab to another pane's edge to split it, onto a tab bar to stack it, and drags a separator to resize. Panes can be moved but never closed or floated, so none can be lost. Each mode keeps its own arrangement, saved in settings and restored at launch; "Reset layout" restores only the current mode. A saved layout that is damaged or missing a pane is replaced by the default with a settings notice. Tab bar: `panel`, the showing tab `text` on `raised` with a 2 pt saffron underline, other tabs `text_dim`; separators `line`, saffron while dragged; drop areas saffron at low alpha.
+The header (project name · Prepare / Present segmented switch · output status pills · Save state · File / Undo / Redo / Settings / Outputs / Shortcuts / Reset layout) and the status bar are fixed. Everything between them is a dock of six panes (egui_dock): **Running order**, **Macros**, **Preview**, **Cues**, **Live** and **Tools** (named **Inspector** in Prepare). The operator drags a pane's tab to another pane's edge to split it, onto a tab bar to stack it, and drags a separator to resize. Panes can be moved but never closed or floated, so none can be lost. Each mode keeps its own arrangement, saved in settings and restored at launch; "Reset layout" restores only the current mode. A saved layout that is damaged or missing a pane is replaced by the default with a settings notice. Tab bar: `panel`, the showing tab `text` on `raised` with a 2 pt saffron underline, other tabs `text_dim`; pane gaps use `bg`, `line` on hover and saffron while dragged; drop areas saffron at low alpha.
 
 **Present, default** (today's arrangement):
 1. **Left, 22 %:** Running order, with Macros stacked as a second tab. Running order has the search field (books + library + playlist, results grouped), Running order / Library / Books tabs, and the list of documents, full height. "New document" is a Prepare-only action.
@@ -36,6 +37,8 @@ Prepare mode swaps the Tools pane for the slide inspector and enables editing af
 Hover (raised + 1 step lighter), pressed, focused (2 pt saffron focus ring, keyboard visible), disabled (text_faint, no hover), loading (inline spinner + verb, never a blocking modal; a media cue without a thumbnail shows "Loading preview…" and the file name on a raised panel in the running order, the cue grid and the Preview, never black), empty (one sentence + the one action that fixes it, e.g. "No books downloaded yet — Download books"), error (inline, names problem + recovery, `live`-red icon only for on-air problems, `warn` otherwise; a media cue that cannot be previewed shows a `warn` icon with "Can't preview <file>" or "File not found: <file>", the reason in the tooltip, and is retried after 10 s unless the file is missing).
 
 ## Controls and copy
+
+Secondary action rows are ghost buttons (no frame until hover); primary and live actions keep frames.
 
 Standard egui widgets only: buttons, tabs/segmented, text fields, combo boxes, sliders, checkboxes, tables/lists. Icons from one embedded line-icon set (Lucide/Phosphor via a font, OFL/MIT) at one stroke weight — no emoji or Unicode glyphs as icons. Labels name the action ("Go live", "Clear slide", "Download Vachanamrut"). Errors: "Couldn't open kirtan.mp3 — file was moved. Choose file…".
 
