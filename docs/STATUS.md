@@ -264,3 +264,42 @@ Plan: `docs/superpowers/plans/2026-10-20-wave-h2.md`. Done on `development` by o
 - Version 1.0.0-rc.7 with Waves H1 and H2. `ALLOW_MISSING_BOOKS="yogi-gita karika aksharamrutam" scripts/package-macos.sh --release` → `.local/dist/Lumen-Presenter-1.0.0-rc.7-macos-arm64.dmg`, 20 MB, `hdiutil verify` valid; mounted: `codesign --verify --deep --strict` passes, Info.plist 1.0.0-rc.7, 12 books, licences present, bundled binary passes `--smoke-test`. SHA-256 `e923dfc5e307b17f46bb78d0764a1e2c183fe6b445f7aa1acd6ba5f9bfae3c73`.
 - Published as GitHub pre-release `v1.0.0-rc.7` from `main`; README Download link points to it.
 - The hand checks listed under H2.6 are still open.
+
+## Wave H3: previews on drop, Auto scale, included books, slide fonts (2026-10-20)
+
+Plan: `docs/superpowers/plans/2026-10-20-wave-h3.md`. Run unattended; one commit per phase on `development`.
+
+### What changed
+- **H3.1 `e955c7e` JPEG previews.** ffprobe reports a still JPEG with a big header (camera Exif etc.) as 0.04 s long; the thumbnailer then ran `ffmpeg -ss 0.004` and got 0 bytes ("Can't preview" until the photo went live). It now seeks only into media at least 0.5 s long. Test `still_jpeg_gets_a_thumbnail` splices a 2 KB comment segment into a generated JPEG (a plain lavfi JPEG has no duration, so it doesn't reproduce the bug); it failed on the old code with "ffmpeg returned 0 bytes". `-ss` appears nowhere else in the crates.
+- **H3.2 `76158c0` Auto scale.** `MediaFit::Auto` fills when picture and screen are both landscape or both portrait, else fits. `MediaFit::default()` is still Fit, so saved shows load as before. New setting `new_media_fit` (default Auto) is used by drop / Add files and by "pick media" on a slide; Settings has a "New photos and videos" combo. The cue-tile / running-order right-click and the inspector list **Auto**, Fit, Fill, Stretch from one list (`inspector::FIT_CHOICES`). **Existing slides keep their saved fit:** right-clicking a running-order row and choosing Auto converts every photo and video of that document.
+- **H3.3 `24d3dcd` Books are just there.** In a packaged app the bundled copy wins over the user's own copy (the user's is used only if the bundled one fails to load; their files are untouched). The Books tab lists the included books, plus any book the user already downloaded that the bundle lacks, with no Download/Resume/Delete buttons, no "n units · ≈ MB · ≈ min" line for included books, no "Not downloaded" label. The "Home folder unavailable" warning and the "download books" empty states only show with no bundle. A stale `book_downloads` queue is ignored in a bundled build. Dev builds behave as before; the downloader stays.
+- **H3.4 `d6a7a7e` Plain letter for a missing character.** `lumen_text::fold_unsupported` maps a character the face lacks to its base letter (ṇ→n, Ṛ→R, ñ→n) when the face has it, `꠶`→`૰`, and leaves format characters (ZWNJ, LRM…) and anything it can't fix alone. U+A830-A83F now counts as Gujarati so `꠶` is drawn by the Gujarati face. Applied per run in the shaper and in the plain egui branches of `gu_label` / `gu_selectable` (`poppins_covers`). `unicode-normalization` (already in `Cargo.lock`) is the only new dependency edge. Coverage is read from the regular face only (code comment marks the shortcut). A lone uncovered combining mark (decomposed NFD text) is not dropped; books are NFC.
+- **H3.5 slide fonts.** Settings → "Slide fonts": English (default Poppins) and Gujarati (default ChitraUni, or Noto Sans Gujarati when ChitraUni isn't installed); the lists hold installed families that cover `a` / `ક`. A saved font that is no longer installed falls back to the default with a notice and keeps its saved name. Changing a font clears the shaped cache and the GPU text cache, so live output, preview and thumbnails re-render. App-wide only: no per-show or per-text-box font, and the console's own UI font is unchanged. The English font also applies to the shaped Gujarati labels in the console, since they share the renderer. Path taken: `db.load_system_fonts()` after the bundled fonts, `load_chitra_fonts`, `user_font_dir` and `CHITRA_LIMIT` deleted, ChitraUni found by family name (the ignored ChitraUni test passes here, with the user's `~/Library/Fonts` files). Note that system fonts now also serve as glyph fallback for characters nothing else covers.
+- **Cost:** `TextRenderer::new()` in a release build is **85 ms** (under the 300 ms line, so not moved off-thread). Listing families takes 86 ms (240 English, 7 Gujarati on this Mac) once, the first time Settings is opened.
+
+### Evidence
+- `cargo fmt --all -- --check` clean; `cargo test --workspace` **320 passed, 0 failed, 6 ignored**; `cargo clippy --workspace --all-targets -- -D warnings` clean.
+- New tests: still-JPEG thumbnail; Auto in `media_rect_uv` (4:3 on 16:9 = Fill, 9:16 on 16:9 = Fit, 9:16 on a portrait canvas = Fill); Auto carried through `build_with_progress`; old settings load as Auto and with default fonts; bundled copy wins, falls back to the user's copy when the bundled one is corrupt; stale download queue ignored in a bundled build; fold cases (ṇ, Ṛ, ñ, ā kept / replaced, Gujarati unchanged, ZWNJ unchanged, `꠶`→`૰`, `Borrowed` when unchanged); shaping "Kṛṣṇa ṇ Ḍ" gives only Poppins glyphs with no `.notdef`; unknown font falls back with the notice; chosen Gujarati font draws Gujarati and empties the cache.
+- **rc.8 DMG:** `.local/dist/Lumen-Presenter-1.0.0-rc.8-macos-arm64.dmg`, 21 MB, SHA-256 `afec7c0326ecda4b14005dbcd9e1549782a352e147bb5b86bec0478983e1f7bf`. `hdiutil verify` valid; mounted: `codesign --verify --deep --strict` passes, Info.plist 1.0.0-rc.8, `Resources/Books` holds 12 books (asv bhagvat chintamani diksha gita harililamrut kavya kirtan pbp shloks vachanamrut vato), no ChitraUni file inside, bundled binary passes `--smoke-test` (exit 0). README's download link was not changed; nothing was pushed or released.
+
+### Verified by hand (the unattended run)
+- The packaged rc.8 app launched with a generated show (4:3 JPEG, 9:16 JPEG, text slide "Kṛṣṇa ꠶ ટેક"), both outputs opened, and triggering all three cues over HTTP worked with no crash (`/status` reported each as live).
+
+### Not verified
+- **Everything that needs to look at pixels.** The screen was locked, so `screencapture` returned a black image and window capture failed ("could not create image from window"). Not looked at: JPEG cue tiles and Preview before going live; the 4:3 photo filling the audience and the 9:16 photo fitted; "Krsna" and `૰` on the text slide with no boxes; the Books tab listing 12 books without download controls; the Settings rows (New photos and videos, Slide fonts) and the combo behaviour; a font change re-rendering live output. All of these are covered only by the unit tests above.
+- Dropping files from Finder into the window (the thumbnail fix was tested at the `thumbnail()` level with a reproducing JPEG).
+- Choosing a non-default font end to end (Settings → apply → persisted → relaunch).
+- Bold and italic faces of a chosen font (coverage is assumed to match the regular face).
+
+### Known gaps
+- Yogi Gita, Karika and Aksharamrutam are still not bundled (importers deferred, decided 2026-10-18).
+- Existing slides keep their saved fit (see H3.2 for converting a show).
+- Slide fonts are app-wide only.
+- HEIC photos are not decoded; EXIF rotation is not checked.
+- Runtime requirements are unchanged: FFmpeg/ffprobe for video and thumbnails; ChitraUni optional (never bundled or committed); Screen Recording only for Play inside Lumen.
+
+### For the user to check by hand
+1. Drop a few camera JPEGs into the window: tiles and Preview should show them straight away, and 4:3 photos fill the audience with no bars while portrait ones stay whole.
+2. Settings → New photos and videos, and Slide fonts (try a Gujarati font, restart, check it stuck).
+3. A slide with "Kṛṣṇa ꠶ ટેક": plain "Krsna" and `૰`, no boxes.
+4. Books tab in the DMG app: 12 books, no Download buttons, even if an older copy is in `~/Library/Application Support/Lumen Presenter/Books`.
