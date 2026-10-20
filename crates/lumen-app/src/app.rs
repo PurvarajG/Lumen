@@ -184,8 +184,12 @@ impl LumenApp {
                 Err(e) => (None, e),
             };
         let saved_project = project.clone();
+        let text_images = crate::text::TextImages::install(&cc.egui_ctx);
+        if let Ok(mut images) = text_images.lock() {
+            images.set_faces(&settings.slide_fonts);
+        }
         let mut app = Self {
-            text_images: crate::text::TextImages::install(&cc.egui_ctx),
+            text_images,
             displays: crate::displays::enumerate_displays(),
             identify_until: None,
             last_display_scan: Instant::now(),
@@ -1489,14 +1493,12 @@ impl LumenApp {
         if ui.button("Close settings").clicked() {
             self.show_settings = false;
         }
-        if let Ok(cache) = self.text_images.lock() {
-            ui.label(cache.font_notice());
-        }
         let action = crate::settings::settings_panel(
             ui,
             &mut self.settings,
             &self.project,
             self.settings_notice.as_deref(),
+            &self.text_images,
         );
         if action.changed && self.settings.validate().is_ok() {
             self.persist_settings();

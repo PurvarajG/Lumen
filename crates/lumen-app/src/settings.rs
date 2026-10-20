@@ -54,6 +54,14 @@ impl BookLanguage {
     }
 }
 
+/// The slide fonts, by family name; `None` is the default (Poppins, and ChitraUni for Gujarati).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SlideFonts {
+    pub latin: Option<String>,
+    pub gujarati: Option<String>,
+}
+
 /// The saved panel layouts, kept as JSON so one bad layout cannot make the whole settings file
 /// unreadable; `dock::Docks::restore` checks them.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +80,7 @@ pub struct Settings {
     pub book_downloads: Vec<String>,
     /// Scale given to photos and videos when they are added to a show.
     pub new_media_fit: lumen_core::MediaFit,
+    pub slide_fonts: SlideFonts,
     pub http_enabled: bool,
     pub http_addr: String,
     pub http_token: String,
@@ -103,6 +112,7 @@ impl Default for Settings {
             books_note_seen: false,
             book_downloads: Vec::new(),
             new_media_fit: lumen_core::MediaFit::Auto,
+            slide_fonts: SlideFonts::default(),
             http_enabled: false,
             http_addr: "127.0.0.1:47800".into(),
             http_token: generate_token(),
@@ -273,6 +283,7 @@ pub fn settings_panel(
     settings: &mut Settings,
     project: &Project,
     notice: Option<&str>,
+    text: &crate::text::SharedText,
 ) -> SettingsAction {
     let mut action = SettingsAction::default();
     if let Some(notice) = notice {
@@ -431,6 +442,7 @@ pub fn settings_panel(
                     .changed();
             }
         });
+    action.changed |= crate::text::font_settings(ui, &mut settings.slide_fonts, text);
     ui.add_space(8.0);
     action.changed |= stage_options(ui, &mut settings.stage, project);
     if let Err(error) = settings.validate() {
@@ -519,6 +531,15 @@ mod tests {
         let old: Settings = serde_json::from_str(r#"{"book_blocks_per_slide": 2}"#).unwrap();
         assert_eq!(old.new_media_fit, lumen_core::MediaFit::Auto);
         assert_eq!(old.book_blocks_per_slide, 2);
+    }
+    #[test]
+    fn old_settings_without_slide_fonts_use_the_default_fonts() {
+        let old: Settings = serde_json::from_str(r#"{"book_blocks_per_slide": 2}"#).unwrap();
+        assert_eq!(old.slide_fonts, SlideFonts::default());
+        let saved: Settings =
+            serde_json::from_str(r#"{"slide_fonts": {"gujarati": "Gujarati MT"}}"#).unwrap();
+        assert_eq!(saved.slide_fonts.gujarati.as_deref(), Some("Gujarati MT"));
+        assert_eq!(saved.slide_fonts.latin, None);
     }
     #[test]
     fn default_settings_are_valid_and_token_is_url_safe() {

@@ -2,9 +2,7 @@
 
 use std::{
     borrow::Cow,
-    collections::{HashMap, HashSet, VecDeque},
-    fs,
-    path::Path,
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     sync::{Arc, OnceLock},
 };
 
@@ -18,7 +16,7 @@ use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 
 const DEFAULT_CACHE_BUDGET: usize = 64 * 1024 * 1024;
 const MAX_DIMENSION: u32 = 4096;
-const CHITRA_LIMIT: u64 = 8 * 1024 * 1024;
+const DEFAULT_LATIN: &str = "Poppins";
 
 const POPPINS_REGULAR: &[u8] = include_bytes!("../fonts/Poppins-Regular.ttf");
 const POPPINS_MEDIUM: &[u8] = include_bytes!("../fonts/Poppins-Medium.ttf");
@@ -135,7 +133,10 @@ pub struct TextRenderer {
     lru: VecDeque<RequestKey>,
     cache_bytes: usize,
     cache_budget: usize,
-    gujarati_face: &'static str,
+    latin_face: String,
+    gujarati_face: String,
+    /// ChitraUni when installed, else the bundled Noto Sans Gujarati.
+    default_gujarati: String,
     gujarati_scale: f32,
     /// Family → codepoints its regular face covers, filled the first time a family is shaped.
     coverage: HashMap<String, HashSet<u32>>,
@@ -168,13 +169,11 @@ impl TextRenderer {
         ] {
             db.load_font_data(bytes.to_vec());
         }
-        let chitra_face = load_chitra_fonts(&mut db);
-        let gujarati_face = if chitra_face {
-            "ChitraUni"
-        } else {
-            "Noto Sans Gujarati"
-        };
-        let gujarati_scale = measured_gujarati_scale(&db, gujarati_face);
+        // Picks up ~/Library/Fonts too, which is where ChitraUni lives.
+        db.load_system_fonts();
+        let default_gujarati =
+            find_family(&db, "ChitraUni").unwrap_or_else(|| "Noto Sans Gujarati".into());
+        let gujarati_scale = measured_gujarati_scale(&db, DEFAULT_LATIN, &default_gujarati);
         #[cfg(test)]
         let face_names = db
             .faces()
@@ -187,7 +186,7 @@ impl TextRenderer {
                 [(face.id, name)]
             })
             .collect::<HashMap<_, _>>();
-        db.set_sans_serif_family("Poppins");
+        db.set_sans_serif_family(DEFAULT_LATIN);
         let fonts = FontSystem::new_with_locale_and_db("en-US".into(), db);
         Self {
             fonts,
@@ -196,7 +195,9 @@ impl TextRenderer {
             lru: VecDeque::new(),
             cache_bytes: 0,
             cache_budget,
-            gujarati_face,
+            latin_face: DEFAULT_LATIN.into(),
+            gujarati_face: default_gujarati.clone(),
+            default_gujarati,
             gujarati_scale,
             coverage: HashMap::new(),
             #[cfg(test)]
@@ -204,9 +205,70 @@ impl TextRenderer {
         }
     }
 
+    /// English (Latin) typeface used by this renderer.
+    pub fn latin_face(&self) -> &str {
+        &self.latin_face
+    }
+
     /// Gujarati typeface used by this renderer.
-    pub fn gujarati_face(&self) -> &'static str {
-        self.gujarati_face
+    pub fn gujarati_face(&self) -> &str {
+        &self.gujarati_face
+    }
+
+    /// The Gujarati face used when none is chosen: ChitraUni if installed, else Noto Sans Gujarati.
+    pub fn default_gujarati_face(&self) -> &str {
+        &self.default_gujarati
+    }
+
+    /// Chooses the slide fonts; `None` means the default. A family that isn't installed falls
+    /// back to the default, and the returned notice says so.
+    pub fn set_faces(&mut self, latin: Option<&str>, gujarati: Option<&str>) -> Option<String> {
+        let db = self.fonts.db();
+        let mut notes = Vec::new();
+        let mut pick = |wanted: Option<&str>, default: &str| match wanted {
+            None => default.to_owned(),
+            Some(name) => find_family(db, name).unwrap_or_else(|| {
+                notes.push(format!("{name} isn't installed; using {default}"));
+                default.to_owned()
+            }),
+        };
+        let latin_face = pick(latin, DEFAULT_LATIN);
+        let gujarati_face = pick(gujarati, &self.default_gujarati);
+        self.gujarati_scale = measured_gujarati_scale(db, &latin_face, &gujarati_face);
+        self.latin_face = latin_face;
+        self.gujarati_face = gujarati_face;
+        // Rendered images and glyph coverage belong to the old faces.
+        self.cache.clear();
+        self.lru.clear();
+        self.cache_bytes = 0;
+        self.coverage.clear();
+        (!notes.is_empty()).then(|| notes.join("; "))
+    }
+
+    /// Installed families, sorted, whose upright face has a glyph for `sample`: `'a'` lists the
+    /// English choices and `'ક'` the Gujarati ones. Walks every installed font, so call it once.
+    pub fn families(&self, sample: char) -> Vec<String> {
+        use cosmic_text::skrifa::{FontRef, MetadataProvider};
+        let db = self.fonts.db();
+        let mut found = BTreeSet::new();
+        for face in db.faces() {
+            let Some((family, _)) = face.families.first() else {
+                continue;
+            };
+            if face.style != cosmic_text::fontdb::Style::Normal || found.contains(family) {
+                continue;
+            }
+            let covers = db
+                .with_face_data(face.id, |data, index| {
+                    FontRef::from_index(data, index)
+                        .is_ok_and(|font| font.charmap().map(sample).is_some())
+                })
+                .unwrap_or(false);
+            if covers {
+                found.insert(family.clone());
+            }
+        }
+        found.into_iter().collect()
     }
 
     pub fn render(&mut self, req: &TextRequest<'_>) -> Result<Arc<RgbaImage>, TextError> {
@@ -324,27 +386,25 @@ impl TextRenderer {
         (used, layout.1, layout.2)
     }
 
-    fn ensure_coverage(&mut self, family: &str) {
-        if !self.coverage.contains_key(family) {
-            let set = family_coverage(self.fonts.db(), family);
-            self.coverage.insert(family.to_owned(), set);
-        }
-    }
-
     fn layout_at(&mut self, req: &TextRequest<'_>, font_px: f32) -> (f32, f32, Buffer) {
         let line_px = font_px * req.line_height;
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(font_px, line_px));
         buffer.set_size(Some(req.width_px as f32), None);
         buffer.set_wrap(Wrap::WordOrGlyph);
-        self.ensure_coverage("Poppins");
-        self.ensure_coverage(self.gujarati_face);
+        for family in [&self.latin_face, &self.gujarati_face] {
+            if !self.coverage.contains_key(family) {
+                let set = family_coverage(self.fonts.db(), family);
+                self.coverage.insert(family.clone(), set);
+            }
+        }
         let (latin, gujarati) = (
-            &self.coverage["Poppins"],
-            &self.coverage[self.gujarati_face],
+            &self.coverage[&self.latin_face],
+            &self.coverage[&self.gujarati_face],
         );
         let spans = styled_runs(
             req,
-            self.gujarati_face,
+            &self.latin_face,
+            &self.gujarati_face,
             font_px,
             self.gujarati_scale,
             &|is_gujarati, ch| {
@@ -352,7 +412,7 @@ impl TextRenderer {
                 set.contains(&(ch as u32))
             },
         );
-        let default = Attrs::new().family(Family::Name("Poppins"));
+        let default = Attrs::new().family(Family::Name(&self.latin_face));
         buffer.set_rich_text(
             spans
                 .iter()
@@ -407,7 +467,7 @@ impl TextRenderer {
 }
 
 // Gujarati has no Latin x-height; measure the unmarked consonant body instead.
-fn measured_gujarati_scale(db: &cosmic_text::fontdb::Database, family: &str) -> f32 {
+fn measured_gujarati_scale(db: &cosmic_text::fontdb::Database, latin: &str, family: &str) -> f32 {
     use cosmic_text::skrifa::{
         FontRef, MetadataProvider,
         instance::{LocationRef, Size},
@@ -426,61 +486,18 @@ fn measured_gujarati_scale(db: &cosmic_text::fontdb::Database, family: &str) -> 
             Some(bounds.y_max - bounds.y_min)
         })?
     };
-    match (height("Poppins", 'x'), height(family, 'ક')) {
+    match (height(latin, 'x'), height(family, 'ક')) {
         (Some(latin), Some(gujarati)) if gujarati > 0.0 => (latin / gujarati).clamp(1.0, 1.6),
         _ => 1.0,
     }
 }
 
-fn load_chitra_fonts(db: &mut cosmic_text::fontdb::Database) -> bool {
-    let mut loaded = false;
-    for dir in [
-        user_font_dir(),
-        Some(std::path::PathBuf::from("/Library/Fonts")),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        let Ok(entries) = fs::read_dir(dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if !name.to_ascii_lowercase().contains("chitra") {
-                continue;
-            }
-            let Ok(metadata) = entry.metadata() else {
-                continue;
-            };
-            if metadata.len() > CHITRA_LIMIT {
-                continue;
-            }
-            let Ok(bytes) = fs::read(&path) else {
-                continue;
-            };
-            let mut candidate = cosmic_text::fontdb::Database::new();
-            candidate.load_font_data(bytes.clone());
-            let families = candidate
-                .faces()
-                .flat_map(|face| face.families.iter().map(|(f, _)| f.clone()))
-                .collect::<Vec<_>>();
-            if !families
-                .iter()
-                .any(|family| family.eq_ignore_ascii_case("ChitraUni"))
-            {
-                continue;
-            }
-            db.load_font_data(bytes);
-            loaded = true;
-            let _ = path;
-        }
-    }
-    loaded
-}
-
-fn user_font_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("HOME").map(|home| Path::new(&home).join("Library/Fonts"))
+/// The database's spelling of an installed family, matched without regard to case.
+fn find_family(db: &cosmic_text::fontdb::Database, name: &str) -> Option<String> {
+    db.faces()
+        .flat_map(|face| face.families.iter())
+        .find(|(family, _)| family.eq_ignore_ascii_case(name))
+        .map(|(family, _)| family.clone())
 }
 
 /// Codepoints the regular face of `family` has a glyph for.
@@ -543,17 +560,18 @@ pub fn fold_unsupported(text: &str, covers: impl Fn(char) -> bool) -> Cow<'_, st
     Cow::Owned(out)
 }
 
-fn styled_runs<'a>(
+fn styled_runs<'a, 'f>(
     req: &'a TextRequest<'_>,
-    gujarati_face: &'static str,
+    latin_face: &'f str,
+    gujarati_face: &'f str,
     font_px: f32,
     gujarati_scale: f32,
     covers: &dyn Fn(bool, char) -> bool,
-) -> Vec<(Cow<'a, str>, Attrs<'static>)> {
+) -> Vec<(Cow<'a, str>, Attrs<'f>)> {
     let mut result = Vec::new();
     for span in req.spans {
         let attrs_for = |gujarati: bool| {
-            let family = if gujarati { gujarati_face } else { "Poppins" };
+            let family = if gujarati { gujarati_face } else { latin_face };
             let weight = if span.bold {
                 Weight::BOLD
             } else {
@@ -940,6 +958,42 @@ mod tests {
     }
 
     #[test]
+    fn unknown_fonts_fall_back_to_the_defaults_with_a_notice() {
+        let mut renderer = TextRenderer::new();
+        let default_gujarati = renderer.default_gujarati_face().to_owned();
+        let notice = renderer.set_faces(Some("No Such Font"), None).unwrap();
+        assert_eq!(notice, "No Such Font isn't installed; using Poppins");
+        assert_eq!(renderer.latin_face(), "Poppins");
+        assert_eq!(renderer.gujarati_face(), default_gujarati);
+        assert_eq!(renderer.set_faces(None, None), None);
+        assert_eq!(renderer.latin_face(), "Poppins");
+    }
+
+    #[test]
+    fn a_chosen_gujarati_font_draws_the_gujarati_and_resets_the_cache() {
+        let mut renderer = TextRenderer::new();
+        let spans = [span("Hello")];
+        renderer.render(&request(&spans)).unwrap();
+        assert_eq!(renderer.cache_len(), 1);
+        assert_eq!(renderer.set_faces(None, Some("Noto Sans Gujarati")), None);
+        assert_eq!(renderer.cache_len(), 0);
+        let shaped = renderer.shape_for_test("વચનામૃત", false, false);
+        assert!(!shaped.glyphs.is_empty());
+        assert!(
+            shaped
+                .glyphs
+                .iter()
+                .all(|g| g.face.contains("Noto Sans Gujarati"))
+        );
+        assert!(
+            renderer
+                .families('ક')
+                .contains(&"Noto Sans Gujarati".to_string())
+        );
+        assert!(renderer.families('a').contains(&"Poppins".to_string()));
+    }
+
+    #[test]
     fn gujarati_conjuncts_shape_as_ligatures_with_active_face() {
         let mut renderer = TextRenderer::new();
         for word in ["ક્ષ", "શ્રી"] {
@@ -1154,6 +1208,25 @@ mod tests {
         assert_eq!(renderer.gujarati_face(), "ChitraUni");
         let shaped = renderer.shape_for_test("વચનામૃત", false, false);
         assert!(shaped.glyphs.iter().all(|g| g.face.contains("ChitraUni")));
+    }
+
+    #[test]
+    #[ignore = "run with --release to record the startup cost of loading system fonts"]
+    fn benchmark_startup_and_font_lists() {
+        let start = std::time::Instant::now();
+        let renderer = TextRenderer::new();
+        eprintln!(
+            "TextRenderer::new: {:.0} ms",
+            start.elapsed().as_secs_f64() * 1000.0
+        );
+        let start = std::time::Instant::now();
+        let (english, gujarati) = (renderer.families('a'), renderer.families('ક'));
+        eprintln!(
+            "families: {} English, {} Gujarati in {:.0} ms",
+            english.len(),
+            gujarati.len(),
+            start.elapsed().as_secs_f64() * 1000.0
+        );
     }
 
     #[test]

@@ -23,6 +23,10 @@ pub struct TextImages {
     bytes: usize,
     tick: u64,
     remaining: usize,
+    /// Installed English and Gujarati families, listed the first time Settings needs them.
+    choices: Option<(Vec<String>, Vec<String>)>,
+    /// Why the chosen fonts were replaced by the defaults, if they were.
+    notice: Option<String>,
 }
 impl Default for TextImages {
     fn default() -> Self {
@@ -33,6 +37,8 @@ impl Default for TextImages {
             bytes: 0,
             tick: 0,
             remaining: IMAGES_PER_FRAME,
+            choices: None,
+            notice: None,
         }
     }
 }
@@ -46,15 +52,21 @@ impl TextImages {
         self.remaining = IMAGES_PER_FRAME;
     }
     pub fn font_notice(&self) -> String {
-        let face = self.renderer.gujarati_face();
         format!(
-            "Gujarati font: {face}{}",
-            if face == "ChitraUni" {
-                ""
-            } else {
-                " (ChitraUni not installed)"
-            }
+            "English font: {} · Gujarati font: {}",
+            self.renderer.latin_face(),
+            self.renderer.gujarati_face()
         )
+    }
+    /// Switches the slide fonts. Slides already drawn keep their pixels until dropped, so the
+    /// GPU cache goes too (its key does not include the font).
+    pub fn set_faces(&mut self, fonts: &crate::settings::SlideFonts) {
+        self.notice = self
+            .renderer
+            .set_faces(fonts.latin.as_deref(), fonts.gujarati.as_deref());
+        self.images.clear();
+        self.previous.clear();
+        self.bytes = 0;
     }
     fn evict_for(&mut self, bytes: usize) {
         while self.bytes + bytes > GPU_BUDGET {
@@ -120,6 +132,79 @@ impl TextImages {
             .and_then(|key| self.images.get(key))
             .map(|entry| entry.texture.clone())
     }
+    fn choices(&mut self) -> (Vec<String>, Vec<String>) {
+        self.choices
+            .take()
+            .unwrap_or_else(|| (self.renderer.families('a'), self.renderer.families('ક')))
+    }
+}
+/// The "Slide fonts" part of Settings; true when a choice changed (and was applied).
+pub fn font_settings(
+    ui: &mut Ui,
+    fonts: &mut crate::settings::SlideFonts,
+    shared: &SharedText,
+) -> bool {
+    let Ok(mut images) = shared.lock() else {
+        return false;
+    };
+    let (english, gujarati) = images.choices();
+    let default_gujarati = images.renderer.default_gujarati_face().to_owned();
+    let gujarati_default_label = if default_gujarati.eq_ignore_ascii_case("ChitraUni") {
+        "ChitraUni (default)".to_owned()
+    } else {
+        format!("{default_gujarati} (ChitraUni not installed)")
+    };
+    ui.add_space(crate::style::GAP);
+    ui.label(
+        egui::RichText::new("SLIDE FONTS")
+            .color(crate::style::MUTED)
+            .strong(),
+    );
+    let mut changed = false;
+    for (id, label, current, default_label, default_name, families) in [
+        (
+            "slide-font-english",
+            "English",
+            &mut fonts.latin,
+            "Poppins (default)".to_owned(),
+            "Poppins".to_owned(),
+            &english,
+        ),
+        (
+            "slide-font-gujarati",
+            "Gujarati",
+            &mut fonts.gujarati,
+            gujarati_default_label,
+            default_gujarati,
+            &gujarati,
+        ),
+    ] {
+        ui.label(label);
+        let shown = current.clone().unwrap_or_else(|| default_label.clone());
+        egui::ComboBox::from_id_salt(id)
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                changed |= ui.selectable_value(current, None, &default_label).changed();
+                for family in families.iter().filter(|f| **f != default_name) {
+                    changed |= ui
+                        .selectable_value(current, Some(family.clone()), family)
+                        .changed();
+                }
+            });
+    }
+    images.choices = Some((english, gujarati));
+    if changed {
+        images.set_faces(fonts);
+    }
+    ui.label(
+        egui::RichText::new(images.font_notice())
+            .color(crate::style::TEXT_DIM)
+            .size(crate::style::CAPTION),
+    );
+    if let Some(notice) = &images.notice {
+        ui.label(egui::RichText::new(notice).color(crate::style::WARN));
+    }
+    changed
 }
 fn request_hash(req: &TextRequest<'_>) -> u64 {
     let mut hash = std::collections::hash_map::DefaultHasher::new();
